@@ -25,13 +25,16 @@ COLORS = {
 SEP = " | "
 
 # ---------------------------------------------------------------------------
-# Caching
+# Caching — user-isolated under /tmp
 # ---------------------------------------------------------------------------
 
-RESOURCE_CACHE = "/tmp/claude-statusline-resources.json"
+_CACHE_DIR = os.path.join("/tmp", f"claude-statusline-{os.getuid()}")
+os.makedirs(_CACHE_DIR, exist_ok=True)
+
+RESOURCE_CACHE = os.path.join(_CACHE_DIR, "resources.json")
 RESOURCE_TTL = 60
 
-GIT_CACHE = "/tmp/claude-statusline-git.json"
+GIT_CACHE = os.path.join(_CACHE_DIR, "git.json")
 GIT_TTL = 5
 
 
@@ -84,14 +87,14 @@ def c(color, text):
 
 
 def safe_get(data, *keys, default=None):
-    """Safely traverse nested dict keys."""
+    """Safely traverse nested dict keys. Returns default only for missing keys."""
     current = data
     for k in keys:
         if isinstance(current, dict):
-            current = current.get(k)
+            if k not in current:
+                return default
+            current = current[k]
         else:
-            return default
-        if current is None:
             return default
     return current
 
@@ -117,13 +120,15 @@ def format_duration(ms):
 
 
 def format_size(n):
-    """Format token count: 1000000 -> '1M', 200000 -> '200K'."""
+    """Format token count: 1000000 -> '1M', 200000 -> '200K', 1048576 -> '1M'."""
     if n is None:
         return "--"
-    if n >= 1_000_000 and n % 1_000_000 == 0:
-        return f"{n // 1_000_000}M"
-    if n >= 1_000 and n % 1_000 == 0:
-        return f"{n // 1_000}K"
+    if n >= 1_000_000:
+        v = n / 1_000_000
+        return f"{v:.1f}M".replace(".0M", "M")
+    if n >= 1_000:
+        v = n / 1_000
+        return f"{v:.1f}K".replace(".0K", "K")
     return str(n)
 
 
@@ -174,10 +179,10 @@ def shorten_relative_time(git_age_str):
 
 
 def run_cmd(cmd, cwd=None, timeout=2):
-    """Run a shell command, return stdout or None on failure."""
+    """Run a command as a list of args (no shell), return stdout or None."""
     try:
         result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True,
+            cmd, capture_output=True, text=True,
             cwd=cwd, timeout=timeout
         )
         if result.returncode == 0:
@@ -195,60 +200,140 @@ def _count_files_in(directory):
     """Count all files recursively in a directory."""
     count = 0
     if os.path.isdir(directory):
-        for _root, _dirs, files in os.walk(directory):
+        for _, _, files in os.walk(directory):
             count += len(files)
     return count
 
 
+def _count_skill_dirs(directory):
+    """Count skill directories (each containing a SKILL.md)."""
+    count = 0
+    if os.path.isdir(directory):
+        for entry in os.listdir(directory):
+            skill_path = os.path.join(directory, entry, "SKILL.md")
+            if os.path.isfile(skill_path):
+                count += 1
+    return count
+
+
+def _read_json(path):
+    """Read and parse a JSON file, returning None on failure."""
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _count_hooks_in(hooks_obj):
+    """Count individual hook configs in a hooks dict (event_type -> list)."""
+    if isinstance(hooks_obj, dict):
+        total = 0
+        for v in hooks_obj.values():
+            if isinstance(v, list):
+                for entry in v:
+                    # Plugin hooks nest: {matcher, hooks: [...]}
+                    inner = entry.get("hooks", None) if isinstance(entry, dict) else None
+                    if isinstance(inner, list):
+                        total += len(inner)
+                    else:
+                        total += 1
+        return total
+    if isinstance(hooks_obj, list):
+        return len(hooks_obj)
+    return 0
+
+
+def _get_installed_plugin_paths():
+    """Return list of installPath values from installed_plugins.json."""
+    data = _read_json(os.path.expanduser("~/.claude/plugins/installed_plugins.json"))
+    if not data or not isinstance(data.get("plugins"), dict):
+        return []
+    paths = []
+    for entries in data["plugins"].values():
+        if isinstance(entries, list):
+            for entry in entries:
+                p = entry.get("installPath")
+                if p and os.path.isdir(p):
+                    paths.append(p)
+    return paths
+
+
 def count_skills(cwd):
-    """Count skill/command files across global and project dirs.
+    """Count skills and commands across global, project, and plugin dirs.
 
     Locations searched:
-      ~/.claude/commands/   (global legacy commands)
-      ~/.claude/skills/     (global skills)
-      {cwd}/.claude/commands/  (project legacy commands)
-      {cwd}/.claude/skills/    (project skills)
+      ~/.claude/commands/        (global legacy commands)
+      ~/.claude/skills/          (global skills)
+      {cwd}/.claude/commands/    (project legacy commands)
+      {cwd}/.claude/skills/      (project skills)
+      {plugin}/skills/           (plugin skills)
+      {plugin}/commands/         (plugin commands)
     """
     home = os.path.expanduser("~/.claude")
     count = (
         _count_files_in(os.path.join(home, "commands"))
-        + _count_files_in(os.path.join(home, "skills"))
+        + _count_skill_dirs(os.path.join(home, "skills"))
     )
     if cwd:
         project = os.path.join(cwd, ".claude")
         count += (
             _count_files_in(os.path.join(project, "commands"))
-            + _count_files_in(os.path.join(project, "skills"))
+            + _count_skill_dirs(os.path.join(project, "skills"))
         )
+    for plugin_path in _get_installed_plugin_paths():
+        count += _count_skill_dirs(os.path.join(plugin_path, "skills"))
+        count += _count_files_in(os.path.join(plugin_path, "commands"))
     return count
 
 
-def count_hooks():
-    """Count total individual hook configs across all event types."""
-    settings_path = os.path.expanduser("~/.claude/settings.json")
-    try:
-        with open(settings_path, "r") as f:
-            settings = json.load(f)
-        hooks = settings.get("hooks", {})
-        if isinstance(hooks, dict):
-            return sum(len(v) if isinstance(v, list) else 0 for v in hooks.values())
-        if isinstance(hooks, list):
-            return len(hooks)
-        return 0
-    except (OSError, json.JSONDecodeError):
-        return 0
+def count_hooks(cwd=None):
+    """Count total individual hook configs from settings, project, and plugins."""
+    count = 0
+    # Global settings hooks
+    settings = _read_json(os.path.expanduser("~/.claude/settings.json"))
+    if settings:
+        count += _count_hooks_in(settings.get("hooks", {}))
+    # Project-level settings hooks
+    if cwd:
+        for name in ("settings.json", "settings.local.json"):
+            proj = _read_json(os.path.join(cwd, ".claude", name))
+            if proj:
+                count += _count_hooks_in(proj.get("hooks", {}))
+    # Plugin hooks
+    for plugin_path in _get_installed_plugin_paths():
+        hooks_data = _read_json(os.path.join(plugin_path, "hooks", "hooks.json"))
+        if hooks_data:
+            count += _count_hooks_in(hooks_data.get("hooks", {}))
+    return count
 
 
-def count_mcp_servers():
-    """Count MCP server keys in settings."""
-    settings_path = os.path.expanduser("~/.claude/settings.json")
-    try:
-        with open(settings_path, "r") as f:
-            settings = json.load(f)
+def count_mcp_servers(cwd=None):
+    """Count MCP servers from settings, project, and plugins."""
+    count = 0
+    # Global settings MCP servers
+    settings = _read_json(os.path.expanduser("~/.claude/settings.json"))
+    if settings:
         servers = settings.get("mcpServers", {})
-        return len(servers) if isinstance(servers, dict) else 0
-    except (OSError, json.JSONDecodeError):
-        return 0
+        count += len(servers) if isinstance(servers, dict) else 0
+    # Project-level MCP servers
+    if cwd:
+        for name in ("settings.json", "settings.local.json"):
+            proj = _read_json(os.path.join(cwd, ".claude", name))
+            if proj:
+                servers = proj.get("mcpServers", {})
+                count += len(servers) if isinstance(servers, dict) else 0
+        # Project .mcp.json
+        proj_mcp = _read_json(os.path.join(cwd, ".mcp.json"))
+        if isinstance(proj_mcp, dict):
+            servers = proj_mcp.get("mcpServers", {})
+            count += len(servers) if isinstance(servers, dict) else 0
+    # Plugin MCP servers (.mcp.json at plugin root, keys = server names)
+    for plugin_path in _get_installed_plugin_paths():
+        mcp_data = _read_json(os.path.join(plugin_path, ".mcp.json"))
+        if isinstance(mcp_data, dict):
+            count += len(mcp_data)
+    return count
 
 
 def get_resource_counts(cwd):
@@ -258,8 +343,8 @@ def get_resource_counts(cwd):
         return cached
     counts = {
         "skills": count_skills(cwd),
-        "hooks": count_hooks(),
-        "mcp": count_mcp_servers(),
+        "hooks": count_hooks(cwd),
+        "mcp": count_mcp_servers(cwd),
     }
     write_cache(RESOURCE_CACHE, counts)
     return counts
@@ -382,32 +467,31 @@ def fetch_git_info(cwd):
     if not cwd:
         return None
 
-    # Check if it's a git repo
-    toplevel = run_cmd(f"git -C '{cwd}' rev-parse --show-toplevel")
+    # Check if it's a git repo and resolve root
+    toplevel = run_cmd(["git", "-C", cwd, "rev-parse", "--show-toplevel"])
     if toplevel is None:
         return None
 
     repo_name = os.path.basename(toplevel)
 
-    branch = run_cmd(f"git -C '{cwd}' branch --show-current")
+    branch = run_cmd(["git", "-C", cwd, "branch", "--show-current"])
     detached = False
     if not branch:
-        # Detached HEAD — use short hash
-        branch = run_cmd(f"git -C '{cwd}' rev-parse --short HEAD")
+        branch = run_cmd(["git", "-C", cwd, "rev-parse", "--short", "HEAD"])
         detached = True
 
-    dirty_out = run_cmd(f"git -C '{cwd}' status --porcelain")
+    dirty_out = run_cmd(["git", "-C", cwd, "status", "--porcelain"])
     dirty = len(dirty_out.splitlines()) if dirty_out else 0
 
-    staged_out = run_cmd(f"git -C '{cwd}' diff --cached --numstat")
+    staged_out = run_cmd(["git", "-C", cwd, "diff", "--cached", "--numstat"])
     staged = len(staged_out.splitlines()) if staged_out else 0
 
-    unpushed = run_cmd(f"git -C '{cwd}' rev-list --count @{{upstream}}..HEAD 2>/dev/null")
-    unpulled = run_cmd(f"git -C '{cwd}' rev-list --count HEAD..@{{upstream}} 2>/dev/null")
+    unpushed = run_cmd(["git", "-C", cwd, "rev-list", "--count", "@{upstream}..HEAD"])
+    unpulled = run_cmd(["git", "-C", cwd, "rev-list", "--count", "HEAD..@{upstream}"])
 
     has_upstream = unpushed is not None
 
-    age_raw = run_cmd(f"git -C '{cwd}' log -1 --format=%cr")
+    age_raw = run_cmd(["git", "-C", cwd, "log", "-1", "--format=%cr"])
     age = shorten_relative_time(age_raw) if age_raw else "--"
 
     return {
@@ -420,19 +504,24 @@ def fetch_git_info(cwd):
         "unpulled": int(unpulled) if unpulled else 0,
         "has_upstream": has_upstream,
         "age": age,
+        "_toplevel": toplevel,
     }
 
 
 def get_git_info(cwd):
-    """Get git info with caching."""
+    """Get git info with caching, keyed by repo root."""
     if not cwd:
         return None
-    cached = read_cache(GIT_CACHE, GIT_TTL, key=cwd)
+    # Resolve repo root for consistent cache key
+    toplevel = run_cmd(["git", "-C", cwd, "rev-parse", "--show-toplevel"])
+    if not toplevel:
+        return None
+    cached = read_cache(GIT_CACHE, GIT_TTL, key=toplevel)
     if cached is not None:
         return cached
     info = fetch_git_info(cwd)
     if info is not None:
-        write_cache(GIT_CACHE, info, key=cwd)
+        write_cache(GIT_CACHE, info, key=toplevel)
     return info
 
 
