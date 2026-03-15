@@ -1,6 +1,6 @@
-# Claude Code Status Line
+# CC-StatusLine
 
-A single-file Python 3 statusline script for [Claude Code](https://claude.ai/claude-code). It reads a JSON payload on stdin and outputs a 4-line ANSI-colored dashboard to stdout.
+A Claude Code plugin that renders a 4-line ANSI-colored statusline dashboard showing environment info, context window usage, session cost, and git status.
 
 ## Output
 
@@ -16,23 +16,75 @@ GIT: my-project | main | Age: 25m | Mod: 3 | Staged: 1 | ↑2 ↓0
 | Line | Content |
 |------|---------|
 | **ENV** | Claude Code version, model name (with context window), skill/MCP/hook counts |
-| **CTX** | Context window usage with color-coded progress bar (green / yellow / red / blinking) |
+| **CTX** | Context window usage with color-coded progress bar |
 | **USE** | Session cost, wall-clock duration, API duration, lines added/removed |
 | **GIT** | Repo name, branch, last commit age, modified/staged file counts, unpushed/unpulled |
 
-### Resource Counting
+## Installation
+
+### Step 1: Install the plugin
+
+From within Claude Code, run:
+
+```
+/plugin install cc-statusline
+```
+
+Or during development, launch with:
+
+```bash
+claude --plugin-dir /path/to/CC-StatusLine
+```
+
+### Step 2: Copy the script to a stable path
+
+The plugin cache path changes with each update, so the statusline script needs to live at a fixed location. Copy it once after installing:
+
+```bash
+cp ~/.claude/plugins/cache/*/cc-statusline/*/scripts/statusline.py ~/.claude/statusline.py
+```
+
+> **Note:** After running `claude plugin update cc-statusline`, re-run this copy command to pick up any script changes.
+
+### Step 3: Register the statusline
+
+Add the following to your `~/.claude/settings.json`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "python3 ~/.claude/statusline.py",
+    "padding": 2
+  }
+}
+```
+
+### Step 4: Restart Claude Code
+
+The statusline appears on the next session start.
+
+### Verify
+
+Use the included slash command to test rendering with a sample payload:
+
+```
+/cc-statusline:statusline-test
+```
+
+## Resource Counting
 
 Skills, MCP servers, and hooks are counted across all sources:
 
 | Source | Skills | MCP Servers | Hooks |
 |--------|--------|-------------|-------|
-| **Global** (`~/.claude/`) | `commands/`, `skills/` | `settings.json` → `mcpServers` | `settings.json` → `hooks` |
-| **Project** (`{cwd}/.claude/`) | `commands/`, `skills/` | `settings.json`, `settings.local.json` → `mcpServers`; `.mcp.json` | `settings.json`, `settings.local.json` → `hooks` |
+| **Global** (`~/.claude/`) | `commands/`, `skills/` | `settings.json` | `settings.json` |
+| **Project** (`{cwd}/.claude/`) | `commands/`, `skills/` | `settings.json`, `settings.local.json`, `.mcp.json` | `settings.json`, `settings.local.json` |
 | **Plugins** (`installed_plugins.json`) | `skills/`, `commands/` | `.mcp.json` | `hooks/hooks.json` |
 
-Counts are cached for 60 seconds to avoid repeated filesystem scans.
+Counts are cached for 60 seconds.
 
-### Color Thresholds
+## Color Thresholds
 
 | Metric | Green | Yellow | Red | Blinking Red |
 |--------|-------|--------|-----|--------------|
@@ -41,69 +93,34 @@ Counts are cached for 60 seconds to avoid repeated filesystem scans.
 
 ## Requirements
 
-- Python 3 (stdlib only, no external dependencies)
+- Python 3 (stdlib only)
 - macOS or Linux
-
-## Installation
-
-1. Copy `statusline.py` to `~/.claude/`:
-
-   ```bash
-   cp statusline.py ~/.claude/statusline.py
-   ```
-
-2. Merge the config from `settings-snippet.json` into `~/.claude/settings.json`:
-
-   ```json
-   {
-     "statusLine": {
-       "type": "command",
-       "command": "python3 ~/.claude/statusline.py",
-       "padding": 2
-     }
-   }
-   ```
-
-3. Restart Claude Code.
-
-## Testing
-
-```bash
-cat test-payload.json | python3 statusline.py
-```
-
-Edge case tests:
-
-```bash
-# Empty/new session
-echo '{}' | python3 statusline.py
-
-# Malformed input (graceful fallback)
-echo 'not json' | python3 statusline.py
-
-# Zero cost (renders $0.00, not $--)
-echo '{"cost":{"total_cost_usd":0}}' | python3 statusline.py
-```
 
 ## Security
 
-- **No shell injection**: All git subprocess calls use argument lists (no `shell=True`)
-- **User-isolated caching**: Cache files live under `/tmp/claude-statusline-{uid}/`, not shared paths
-- **Fail-safe**: Top-level try/except ensures the script never exits with a non-zero code
+- **No shell injection**: All subprocess calls use argument lists (no `shell=True`)
+- **User-isolated caching**: Cache files under `/tmp/claude-statusline-{uid}/`
+- **Fail-safe**: Top-level try/except ensures the script never exits non-zero
 
 ## Performance
 
-- Git results cached for 5 seconds (keyed by repo root, not cwd)
+- Git results cached for 5 seconds (keyed by repo root)
 - Resource counts cached for 60 seconds
-- Typical execution: ~250ms (dominated by Python startup + git calls)
+- Typical execution: ~250ms
 
-## Files
+## Project Structure
 
-| File | Purpose |
-|------|---------|
-| `statusline.py` | Main statusline script |
-| `settings-snippet.json` | Config block for `~/.claude/settings.json` |
-| `test-payload.json` | Sample stdin payload for testing |
+```
+CC-StatusLine/
+├── .claude-plugin/
+│   └── plugin.json            # Plugin manifest
+├── scripts/
+│   └── statusline.py          # Main statusline script
+├── commands/
+│   └── statusline-test.md     # /cc-statusline:statusline-test
+├── test-payload.json          # Sample stdin for manual testing
+└── README.md
+```
 
 ## License
 

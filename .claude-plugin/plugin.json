@@ -1,0 +1,12 @@
+{
+  "name": "cc-statusline",
+  "version": "1.0.0",
+  "description": "4-line ANSI dashboard statusline for Claude Code showing environment, context window, session cost, and git status",
+  "author": {
+    "name": "Patrick Chouinard",
+    "url": "https://github.com/hopchouinard"
+  },
+  "repository": "https://github.com/hopchouinard/CC-StatusLine",
+  "license": "MIT",
+  "keywords": ["statusline", "dashboard", "status", "context", "git"]
+}
