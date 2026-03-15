@@ -1,5 +1,5 @@
 {
-  "cwd": "/Volumes/NVMe_2TB_Work/Development/CC-StatusLine",
+  "cwd": "/home/user/my-project",
   "session_id": "abc123",
   "transcript_path": "/tmp/transcript.jsonl",
   "version": "2.1.56",
@@ -8,8 +8,8 @@
     "display_name": "Opus"
   },
   "workspace": {
-    "current_dir": "/Volumes/NVMe_2TB_Work/Development/CC-StatusLine",
-    "project_dir": "/Volumes/NVMe_2TB_Work/Development/CC-StatusLine"
+    "current_dir": "/home/user/my-project",
+    "project_dir": "/home/user/my-project"
   },
   "cost": {
     "total_cost_usd": 0.42,
