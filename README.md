@@ -22,51 +22,34 @@ GIT: my-project | main | Age: 25m | Mod: 3 | Staged: 1 | ↑2 ↓0
 
 ## Installation
 
-### Step 1: Install the plugin
-
-From within Claude Code, run:
+### Step 1: Add the marketplace and install
 
 ```
-/plugin install cc-statusline
+/plugin marketplace add hopchouinard/claude-marketplace
+/plugin install cc-statusline@hopchouinard-plugins
 ```
 
-Or during development, launch with:
+### Step 2: Run setup
 
-```bash
-claude --plugin-dir /path/to/CC-StatusLine
+The plugin includes a setup command that deploys the script and configures your settings automatically:
+
+```
+/cc-statusline:setup
 ```
 
-### Step 2: Copy the script to a stable path
+This will:
+- Copy `statusline.py` to `~/.claude/statusline.py`
+- Add the `statusLine` config to `~/.claude/settings.json`
 
-The plugin cache path changes with each update, so the statusline script needs to live at a fixed location. Copy it once after installing:
+> **Note:** A SessionStart hook also runs automatically on each new session. It keeps the script up to date and reminds Claude to suggest setup if the config is missing.
 
-```bash
-cp ~/.claude/plugins/cache/*/cc-statusline/*/scripts/statusline.py ~/.claude/statusline.py
-```
-
-> **Note:** After running `claude plugin update cc-statusline`, re-run this copy command to pick up any script changes.
-
-### Step 3: Register the statusline
-
-Add the following to your `~/.claude/settings.json`:
-
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "python3 ~/.claude/statusline.py",
-    "padding": 2
-  }
-}
-```
-
-### Step 4: Restart Claude Code
+### Step 3: Restart Claude Code
 
 The statusline appears on the next session start.
 
 ### Verify
 
-Use the included slash command to test rendering with a sample payload:
+Test rendering with a sample payload:
 
 ```
 /cc-statusline:statusline-test
@@ -116,7 +99,11 @@ CC-StatusLine/
 │   └── plugin.json            # Plugin manifest
 ├── scripts/
 │   └── statusline.py          # Main statusline script
+├── hooks/
+│   ├── hooks.json             # SessionStart hook config
+│   └── setup-statusline.sh    # Auto-deploy on session start
 ├── commands/
+│   ├── setup.md               # /cc-statusline:setup
 │   └── statusline-test.md     # /cc-statusline:statusline-test
 ├── test-payload.json          # Sample stdin for manual testing
 └── README.md
