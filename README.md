@@ -25,8 +25,8 @@ GIT: my-project | main | Age: 25m | Mod: 3 | Staged: 1 | ↑2 ↓0
 ### Step 1: Add the marketplace and install
 
 ```
-/plugin marketplace add hopchouinard/claude-marketplace
-/plugin install cc-statusline@hopchouinard-plugins
+/plugin marketplace add hopchouinard/patchoutech-plugins
+/plugin install cc-statusline@patchoutech-plugins
 ```
 
 ### Step 2: Run setup
@@ -50,7 +50,7 @@ The statusline appears on the next session start.
 ### Updating
 
 ```
-/plugin update cc-statusline@hopchouinard-plugins
+/plugin update cc-statusline@patchoutech-plugins
 /reload-plugins
 ```
 
