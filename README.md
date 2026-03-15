@@ -47,6 +47,15 @@ This will:
 
 The statusline appears on the next session start.
 
+### Updating
+
+```
+/plugin update cc-statusline@hopchouinard-plugins
+/reload-plugins
+```
+
+The SessionStart hook will automatically deploy the updated script to `~/.claude/statusline.py` on your next session.
+
 ### Verify
 
 Test rendering with a sample payload:
@@ -105,6 +114,9 @@ CC-StatusLine/
 ├── commands/
 │   ├── setup.md               # /cc-statusline:setup
 │   └── statusline-test.md     # /cc-statusline:statusline-test
+├── Docs/
+│   ├── claude-code-statusline-spec.md
+│   └── cc-statusline-plugin-spec.md
 ├── test-payload.json          # Sample stdin for manual testing
 └── README.md
 ```
