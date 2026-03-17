@@ -30,8 +30,18 @@ SEP = " | "
 # Caching — user-isolated under system temp directory
 # ---------------------------------------------------------------------------
 
-_CACHE_DIR = os.path.join(tempfile.gettempdir(), f"claude-statusline-{getpass.getuser()}")
+try:
+    _username = getpass.getuser()
+except Exception:
+    _username = "unknown"
+
+_CACHE_DIR = os.path.join(tempfile.gettempdir(), f"claude-statusline-{_username}")
 os.makedirs(_CACHE_DIR, exist_ok=True)
+
+# Enable ANSI escape processing on Windows (conhost.exe requires this)
+if sys.platform == "win32":
+    # Static empty-string argument — triggers VT100 mode in Windows console
+    os.system("")  # noqa: S605
 
 RESOURCE_CACHE = os.path.join(_CACHE_DIR, "resources.json")
 RESOURCE_TTL = 60

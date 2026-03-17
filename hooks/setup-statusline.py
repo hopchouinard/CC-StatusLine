@@ -17,11 +17,13 @@ DEST = os.path.join(CLAUDE_DIR, "statusline.py")
 SRC = os.path.join(PLUGIN_ROOT, "scripts", "statusline.py")
 SETTINGS = os.path.join(CLAUDE_DIR, "settings.json")
 
-# On Windows, python3 may not exist — use the same executable running this hook
-PYTHON_CMD = "python" if sys.platform == "win32" else "python3"
-STATUSLINE_PATH = "~/.claude/statusline.py"
+# On Windows, python3 may not exist; tilde doesn't expand in cmd.exe/PowerShell
 if sys.platform == "win32":
-    STATUSLINE_PATH = os.path.join("~", ".claude", "statusline.py")
+    PYTHON_CMD = "python"
+    STATUSLINE_PATH = os.path.join(os.path.expanduser("~"), ".claude", "statusline.py")
+else:
+    PYTHON_CMD = "python3"
+    STATUSLINE_PATH = "~/.claude/statusline.py"
 
 
 def main():

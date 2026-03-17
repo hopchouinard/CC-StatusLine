@@ -86,7 +86,7 @@ Counts are cached for 60 seconds.
 ## Requirements
 
 - Python 3 (stdlib only)
-- macOS, Linux, or Windows
+- macOS, Linux, or Windows (Windows Terminal recommended for proper ANSI/Unicode rendering)
 
 ## Security
 
