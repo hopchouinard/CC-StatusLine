@@ -88,6 +88,18 @@ Counts are cached for 60 seconds.
 - Python 3 (stdlib only)
 - macOS, Linux, or Windows (Windows Terminal recommended for proper ANSI/Unicode rendering)
 
+## Platform Compatibility
+
+The plugin auto-detects the platform and adapts accordingly:
+
+| Behavior | macOS / Linux | Windows |
+|----------|---------------|---------|
+| Python command | `python3` | `python` |
+| statusLine path in settings | `~/.claude/statusline.py` | Absolute path (e.g., `C:\Users\user\.claude\statusline.py`) |
+| Cache directory | `/var/folders/.../claude-statusline-user/` | `%TEMP%\claude-statusline-user\` |
+| ANSI colors | Native support | VT processing enabled automatically |
+| SessionStart hook | `python` (falls back gracefully) | `python` |
+
 ## Security
 
 - **No shell injection**: All subprocess calls use argument lists (no `shell=True`)
