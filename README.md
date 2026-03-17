@@ -86,12 +86,12 @@ Counts are cached for 60 seconds.
 ## Requirements
 
 - Python 3 (stdlib only)
-- macOS or Linux
+- macOS, Linux, or Windows
 
 ## Security
 
 - **No shell injection**: All subprocess calls use argument lists (no `shell=True`)
-- **User-isolated caching**: Cache files under `/tmp/claude-statusline-{uid}/`
+- **User-isolated caching**: Cache files under `{tempdir}/claude-statusline-{user}/`
 - **Fail-safe**: Top-level try/except ensures the script never exits non-zero
 
 ## Performance
@@ -110,7 +110,7 @@ CC-StatusLine/
 │   └── statusline.py          # Main statusline script
 ├── hooks/
 │   ├── hooks.json             # SessionStart hook config
-│   └── setup-statusline.sh    # Auto-deploy on session start
+│   └── setup-statusline.py    # Auto-deploy on session start
 ├── commands/
 │   ├── setup.md               # /cc-statusline:setup
 │   └── statusline-test.md     # /cc-statusline:statusline-test

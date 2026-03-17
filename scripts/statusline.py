@@ -7,6 +7,8 @@ import subprocess
 import os
 import time
 import re
+import getpass
+import tempfile
 
 COLORS = {
     "reset":      "\033[0m",
@@ -25,10 +27,10 @@ COLORS = {
 SEP = " | "
 
 # ---------------------------------------------------------------------------
-# Caching — user-isolated under /tmp
+# Caching — user-isolated under system temp directory
 # ---------------------------------------------------------------------------
 
-_CACHE_DIR = os.path.join("/tmp", f"claude-statusline-{os.getuid()}")
+_CACHE_DIR = os.path.join(tempfile.gettempdir(), f"claude-statusline-{getpass.getuser()}")
 os.makedirs(_CACHE_DIR, exist_ok=True)
 
 RESOURCE_CACHE = os.path.join(_CACHE_DIR, "resources.json")
