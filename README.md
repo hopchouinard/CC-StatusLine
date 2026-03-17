@@ -39,7 +39,7 @@ The plugin includes a setup command that deploys the script and configures your 
 
 This will:
 - Copy `statusline.py` to `~/.claude/statusline.py`
-- Add the `statusLine` config to `~/.claude/settings.json`
+- Detect your OS and add the `statusLine` config to `~/.claude/settings.json` with the correct Python command (`python3` on macOS/Linux, `python` on Windows)
 
 > **Note:** A SessionStart hook also runs automatically on each new session. It keeps the script up to date and reminds Claude to suggest setup if the config is missing.
 

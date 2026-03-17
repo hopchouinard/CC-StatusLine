@@ -1,6 +1,6 @@
 {
   "name": "cc-statusline",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "4-line ANSI dashboard statusline for Claude Code showing environment, context window, session cost, and git status",
   "author": {
     "name": "Patrick Chouinard",

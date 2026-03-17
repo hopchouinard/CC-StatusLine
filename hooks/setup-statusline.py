@@ -6,6 +6,7 @@ Cross-platform: macOS, Linux, Windows.
 """
 
 import os
+import sys
 import json
 import shutil
 import filecmp
@@ -15,6 +16,12 @@ CLAUDE_DIR = os.path.join(os.path.expanduser("~"), ".claude")
 DEST = os.path.join(CLAUDE_DIR, "statusline.py")
 SRC = os.path.join(PLUGIN_ROOT, "scripts", "statusline.py")
 SETTINGS = os.path.join(CLAUDE_DIR, "settings.json")
+
+# On Windows, python3 may not exist — use the same executable running this hook
+PYTHON_CMD = "python" if sys.platform == "win32" else "python3"
+STATUSLINE_PATH = "~/.claude/statusline.py"
+if sys.platform == "win32":
+    STATUSLINE_PATH = os.path.join("~", ".claude", "statusline.py")
 
 
 def main():
@@ -45,17 +52,17 @@ def main():
             pass
 
     # Settings file missing statusLine config — print instructions for Claude context
-    print("""[cc-statusline] Setup required: The statusLine config is not yet in ~/.claude/settings.json.
+    print(f"""[cc-statusline] Setup required: The statusLine config is not yet in ~/.claude/settings.json.
 
 The user needs to add the following to their ~/.claude/settings.json:
 
-{
-  "statusLine": {
+{{
+  "statusLine": {{
     "type": "command",
-    "command": "python3 ~/.claude/statusline.py",
+    "command": "{PYTHON_CMD} {STATUSLINE_PATH}",
     "padding": 2
-  }
-}
+  }}
+}}
 
 After adding it, restart Claude Code to activate the statusline.
 Suggest the user run /cc-statusline:setup if they need help.""")
