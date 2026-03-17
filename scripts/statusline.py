@@ -38,10 +38,18 @@ except Exception:
 _CACHE_DIR = os.path.join(tempfile.gettempdir(), f"claude-statusline-{_username}")
 os.makedirs(_CACHE_DIR, exist_ok=True)
 
-# Enable ANSI escape processing on Windows (conhost.exe requires this)
+# Enable ANSI escape processing on Windows
 if sys.platform == "win32":
-    # Static empty-string argument — triggers VT100 mode in Windows console
-    os.system("")  # noqa: S605
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        # STD_OUTPUT_HANDLE = -11, ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        handle = kernel32.GetStdHandle(-11)
+        mode = ctypes.c_ulong()
+        kernel32.GetConsoleMode(handle, ctypes.byref(mode))
+        kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+    except Exception:
+        pass
 
 RESOURCE_CACHE = os.path.join(_CACHE_DIR, "resources.json")
 RESOURCE_TTL = 60
