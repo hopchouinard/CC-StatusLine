@@ -20,7 +20,8 @@ SETTINGS = os.path.join(CLAUDE_DIR, "settings.json")
 # On Windows, python3 may not exist; tilde doesn't expand in cmd.exe/PowerShell
 if sys.platform == "win32":
     PYTHON_CMD = "python"
-    STATUSLINE_PATH = os.path.join(os.path.expanduser("~"), ".claude", "statusline.py")
+    # Use forward slashes — Claude Code runs commands through bash even on Windows
+    STATUSLINE_PATH = os.path.join(os.path.expanduser("~"), ".claude", "statusline.py").replace("\\", "/")
 else:
     PYTHON_CMD = "python3"
     STATUSLINE_PATH = "~/.claude/statusline.py"

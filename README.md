@@ -95,7 +95,7 @@ The plugin auto-detects the platform and adapts accordingly:
 | Behavior | macOS / Linux | Windows |
 |----------|---------------|---------|
 | Python command | `python3` | `python` |
-| statusLine path in settings | `~/.claude/statusline.py` | Absolute path (e.g., `C:\Users\user\.claude\statusline.py`) |
+| statusLine path in settings | `~/.claude/statusline.py` | Absolute path with forward slashes (e.g., `C:/Users/user/.claude/statusline.py`) |
 | Cache directory | `/var/folders/.../claude-statusline-user/` | `%TEMP%\claude-statusline-user\` |
 | ANSI colors | Native support | VT processing enabled automatically |
 | SessionStart hook | `python` (falls back gracefully) | `python` |

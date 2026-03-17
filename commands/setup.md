@@ -43,13 +43,13 @@ On macOS/Linux:
 }
 ```
 
-On Windows, use `python` and the **full absolute path** (tilde does not expand on Windows). Resolve the home directory with `python -c "import os; print(os.path.expanduser('~'))"` and build the path:
+On Windows, use `python` and the **full absolute path with forward slashes** (tilde does not expand on Windows, and Claude Code runs commands through bash which requires forward slashes). Resolve the home directory with `python -c "import os; print(os.path.expanduser('~'))"` and build the path:
 
 ```json
 {
   "statusLine": {
     "type": "command",
-    "command": "python C:\\Users\\username\\.claude\\statusline.py",
+    "command": "python C:/Users/username/.claude/statusline.py",
     "padding": 2
   }
 }
