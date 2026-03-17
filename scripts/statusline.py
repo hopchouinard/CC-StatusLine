@@ -38,7 +38,7 @@ except Exception:
 _CACHE_DIR = os.path.join(tempfile.gettempdir(), f"claude-statusline-{_username}")
 os.makedirs(_CACHE_DIR, exist_ok=True)
 
-# Enable ANSI escape processing on Windows
+# Windows: enable ANSI escapes and force UTF-8 stdout
 if sys.platform == "win32":
     try:
         import ctypes
@@ -48,6 +48,10 @@ if sys.platform == "win32":
         mode = ctypes.c_ulong()
         kernel32.GetConsoleMode(handle, ctypes.byref(mode))
         kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+    except Exception:
+        pass
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
         pass
 
