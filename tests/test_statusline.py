@@ -156,5 +156,82 @@ class TestFormatReset(unittest.TestCase):
         self.assertEqual(sl.format_reset(self.NOW + 7 * 86400, now=self.NOW), "7d")
 
 
+class TestJoinSegments(unittest.TestCase):
+    def test_drops_none_without_leaving_a_separator(self):
+        self.assertEqual(sl.join_segments("a", None, "b"), "a | b")
+
+    def test_drops_empty_strings(self):
+        self.assertEqual(sl.join_segments("a", "", "b"), "a | b")
+
+    def test_trailing_none_leaves_no_trailing_separator(self):
+        self.assertEqual(sl.join_segments("a", None), "a")
+
+    def test_leading_none_leaves_no_leading_separator(self):
+        self.assertEqual(sl.join_segments(None, "a"), "a")
+
+    def test_all_absent_is_empty_string(self):
+        self.assertEqual(sl.join_segments(None, None), "")
+
+    def test_single_segment(self):
+        self.assertEqual(sl.join_segments("a"), "a")
+
+
+class TestEffortSegment(unittest.TestCase):
+    def test_absent_field(self):
+        self.assertIsNone(sl.effort_segment({}))
+
+    def test_absent_level(self):
+        self.assertIsNone(sl.effort_segment({"effort": {}}))
+
+    def test_empty_level(self):
+        self.assertIsNone(sl.effort_segment({"effort": {"level": ""}}))
+
+    def test_each_known_level_renders_its_name(self):
+        for level in ("low", "medium", "high", "xhigh", "max"):
+            with self.subTest(level=level):
+                seg = sl.effort_segment({"effort": {"level": level}})
+                self.assertEqual(plain(seg), f"Eff: {level}")
+
+    def test_max_uses_bold_red(self):
+        seg = sl.effort_segment({"effort": {"level": "max"}})
+        self.assertIn(sl.COLORS["bold_red"], seg)
+
+    def test_max_does_not_blink(self):
+        seg = sl.effort_segment({"effort": {"level": "max"}})
+        self.assertNotIn(sl.COLORS["blink"], seg)
+
+    def test_xhigh_and_max_are_visually_distinct(self):
+        xhigh = sl.effort_segment({"effort": {"level": "xhigh"}}).replace("xhigh", "")
+        top = sl.effort_segment({"effort": {"level": "max"}}).replace("max", "")
+        self.assertNotEqual(xhigh, top)
+
+    def test_unknown_level_renders_in_white_instead_of_raising(self):
+        seg = sl.effort_segment({"effort": {"level": "ultra"}})
+        self.assertEqual(plain(seg), "Eff: ultra")
+        self.assertIn(sl.COLORS["white"], seg)
+
+
+class TestRenderEnvironment(unittest.TestCase):
+    def _render(self, payload):
+        return plain(sl.render_environment(payload))
+
+    def test_effort_sits_between_model_and_skills(self):
+        out = self._render({
+            "version": "2.1.220",
+            "model": {"id": "claude-opus-5", "display_name": "Opus"},
+            "effort": {"level": "high"},
+        })
+        self.assertIn("| Eff: high | SK:", out)
+
+    def test_absent_effort_leaves_model_adjacent_to_skills(self):
+        out = self._render({
+            "version": "2.1.220",
+            "model": {"id": "claude-sonnet-5", "display_name": "Sonnet"},
+        })
+        self.assertNotIn("Eff:", out)
+        self.assertIn("| SK:", out)
+        self.assertNotIn("|  |", out)
+
+
 if __name__ == "__main__":
     unittest.main()

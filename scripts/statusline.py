@@ -22,9 +22,21 @@ COLORS = {
     "white":      "\033[37m",
     "bold_cyan":  "\033[1;36m",
     "bold_white": "\033[1;37m",
+    "bold_red":   "\033[1;31m",
 }
 
 SEP = " | "
+
+# Effort levels, coloured by cost. `max` is bold red rather than blinking:
+# blink means "about to hurt you" in this statusline and is reserved for the
+# >90% context alarm. A max effort level is a choice the user made on purpose.
+EFFORT_COLORS = {
+    "low":    "dim",
+    "medium": "green",
+    "high":   "yellow",
+    "xhigh":  "red",
+    "max":    "bold_red",
+}
 
 # ---------------------------------------------------------------------------
 # Caching — user-isolated under system temp directory
@@ -108,6 +120,16 @@ def write_cache(cache_file, data, key=None):
 def c(color, text):
     """Wrap text in ANSI color."""
     return f"{COLORS.get(color, '')}{text}{COLORS['reset']}"
+
+
+def join_segments(*segments):
+    """Join truthy segments with SEP, dropping absent ones and their separators.
+
+    This is what makes the absence policy structural: a section with nothing
+    to say returns None and disappears, separator included. It cannot leave a
+    dangling "|" behind because it never contributes one.
+    """
+    return SEP.join(s for s in segments if s)
 
 
 def safe_get(data, *keys, default=None):
@@ -441,27 +463,32 @@ def get_resource_counts(cwd):
 # Section renderers
 # ---------------------------------------------------------------------------
 
+def effort_segment(data):
+    """'Eff: high' when the model reports a reasoning effort level, else None.
+
+    Absent whenever the current model has no reasoning-effort support.
+    """
+    level = safe_get(data, "effort", "level")
+    if not level:
+        return None
+    return f"{c('dim', 'Eff:')} {c(EFFORT_COLORS.get(level, 'white'), level)}"
+
+
 def render_environment(data):
-    """ENV: CC:{version} | Model: {model} | SK: {skills} | MCP: {mcps} | Hooks: {hooks}"""
+    """ENV: CC:{version} | Model: {model} | Eff: {effort} | SK: {n} | MCP: {n} | Hooks: {n}"""
     version = safe_get(data, "version", default="--")
     model = parse_model_name(data)
     cwd = safe_get(data, "cwd", default=None)
     counts = get_resource_counts(cwd)
 
-    parts = [
-        c("bold_cyan", "ENV:"),
-        " ",
+    return f"{c('bold_cyan', 'ENV:')} " + join_segments(
         f"CC:{c('white', version)}",
-        SEP,
         f"{c('dim', 'Model:')} {c('green', model)}",
-        SEP,
+        effort_segment(data),
         f"{c('dim', 'SK:')} {c('yellow', counts['skills'])}",
-        SEP,
         f"{c('dim', 'MCP:')} {c('yellow', counts['mcp'])}",
-        SEP,
         f"{c('dim', 'Hooks:')} {c('yellow', counts['hooks'])}",
-    ]
-    return "".join(str(p) for p in parts)
+    )
 
 
 def render_context_window(data):
