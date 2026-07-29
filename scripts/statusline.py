@@ -764,7 +764,7 @@ def maybe_dump_payload(raw):
         if os.path.exists(DEBUG_FLAG):
             with open(DEBUG_PAYLOAD, "w", encoding="utf-8") as f:
                 f.write(raw)
-    except OSError:
+    except (OSError, UnicodeError):
         pass
 
 

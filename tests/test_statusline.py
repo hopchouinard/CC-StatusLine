@@ -432,6 +432,10 @@ class TestPayloadDebugCapture(unittest.TestCase):
         sl.DEBUG_PAYLOAD = os.path.join(self.out, "nope", "payload.json")
         sl.maybe_dump_payload('{"a": 1}')  # must not raise
 
+    def test_surrogate_escaped_payload_never_raises(self):
+        open(self.flag, "w").close()
+        sl.maybe_dump_payload('hello \udcff world')  # must not raise
+
     def test_non_utf8_safe_content_round_trips(self):
         open(self.flag, "w").close()
         sl.maybe_dump_payload('{"branch": "café ← main"}')
