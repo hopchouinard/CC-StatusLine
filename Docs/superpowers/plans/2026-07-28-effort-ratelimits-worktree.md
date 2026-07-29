@@ -49,7 +49,10 @@ Establishes the test file and extracts the 50/75/90/blink ladder that three sect
 
 **Interfaces:**
 - Consumes: nothing
-- Produces: `pct_color(pct) -> tuple[str, bool]` returning `(colour_name, blink)`. Callers look the colour up in `COLORS` and prepend `COLORS["blink"]` when the flag is set. The test module exposes `sl` (the loaded script module) and `plain(s)` (ANSI stripper) for all later tasks.
+- Produces:
+  - `pct_color(pct) -> tuple[str, bool]` returning `(colour_name, blink)`.
+  - `color_prefix(color, blink) -> str` turning that pair into an ANSI prefix. Both consumers call `color_prefix(*pct_color(pct))` so the construction exists in exactly one place.
+  - The test module exposes `sl` (the loaded script module) and `plain(s)` (ANSI stripper) for all later tasks.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -112,6 +115,22 @@ class TestPctColor(unittest.TestCase):
         self.assertEqual(sl.pct_color(104), ("red", True))
 
 
+class TestColorPrefix(unittest.TestCase):
+    def test_plain_colour(self):
+        self.assertEqual(sl.color_prefix("green", False), sl.COLORS["green"])
+
+    def test_blink_is_layered_on(self):
+        self.assertEqual(sl.color_prefix("red", True),
+                         sl.COLORS["red"] + sl.COLORS["blink"])
+
+    def test_unknown_colour_contributes_nothing(self):
+        self.assertEqual(sl.color_prefix("chartreuse", False), "")
+
+    def test_composes_with_pct_color(self):
+        self.assertEqual(sl.color_prefix(*sl.pct_color(95)),
+                         sl.COLORS["red"] + sl.COLORS["blink"])
+
+
 class TestRenderContextWindowRefactor(unittest.TestCase):
     """The pct_color extraction must not change rendered output."""
 
@@ -145,7 +164,7 @@ if __name__ == "__main__":
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `python3 tests/test_statusline.py -v`
-Expected: FAIL — `AttributeError: module 'statusline' has no attribute 'pct_color'` on the `TestPctColor` cases. The `TestRenderContextWindowRefactor` cases should already PASS, since they describe current behaviour.
+Expected: FAIL — `AttributeError: module 'statusline' has no attribute 'pct_color'` on the `TestPctColor` cases and `... has no attribute 'color_prefix'` on the `TestColorPrefix` cases. The `TestRenderContextWindowRefactor` cases should already PASS, since they describe current behaviour.
 
 - [ ] **Step 3: Add `pct_color`**
 
@@ -167,6 +186,16 @@ def pct_color(pct):
     if pct <= 90:
         return ("red", False)
     return ("red", True)
+
+
+def color_prefix(color, blink):
+    """ANSI prefix for a colour name, with blink layered on when set.
+
+    Kept separate from pct_color so the threshold ladder stays testable as
+    readable ("green", False) pairs rather than opaque escape sequences,
+    while the escape construction itself still lives in exactly one place.
+    """
+    return COLORS.get(color, "") + (COLORS["blink"] if blink else "")
 ```
 
 - [ ] **Step 4: Rewrite `render_context_window` to use it**
@@ -187,8 +216,7 @@ def render_context_window(data):
     bar_filled = "▓" * filled                # ▓
     bar_empty = "░" * (bar_width - filled)   # ░
 
-    color, blink = pct_color(pct)
-    prefix = COLORS.get(color, "") + (COLORS["blink"] if blink else "")
+    prefix = color_prefix(*pct_color(pct))
     pct_str = "--%" if pct is None else f"{pct}%"
 
     colored_bar = (
@@ -208,7 +236,7 @@ The `max(0, min(bar_width, filled))` clamp is new. It cannot change output for a
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `python3 tests/test_statusline.py -v`
-Expected: PASS, 14 tests.
+Expected: PASS, 18 tests.
 
 - [ ] **Step 6: Verify the rendered output is unchanged**
 
@@ -383,7 +411,7 @@ def format_reset(resets_at, now=None):
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `python3 tests/test_statusline.py -v`
-Expected: PASS, 31 tests.
+Expected: PASS, 35 tests.
 
 - [ ] **Step 6: Confirm the USE line is untouched**
 
@@ -582,7 +610,7 @@ def render_environment(data):
 - [ ] **Step 8: Run the tests to verify they pass**
 
 Run: `python3 tests/test_statusline.py -v`
-Expected: PASS, 47 tests.
+Expected: PASS, 51 tests.
 
 - [ ] **Step 9: Verify against a live payload**
 
@@ -615,7 +643,7 @@ rule each renderer has to remember."
 - Modify: `tests/test_statusline.py` (append two test classes)
 
 **Interfaces:**
-- Consumes: `pct_color` (Task 1), `format_reset` (Task 2), `join_segments` (Task 3)
+- Consumes: `pct_color` and `color_prefix` (Task 1), `format_reset` (Task 2), `join_segments` (Task 3)
 - Produces: `rate_limit_segment(data, now=None) -> str | None`. `now` is injectable so tests are deterministic.
 
 - [ ] **Step 1: Write the failing tests**
@@ -730,8 +758,7 @@ def rate_limit_segment(data, now=None):
             pct = round(float(raw))
         except (TypeError, ValueError):
             continue
-        color, blink = pct_color(pct)
-        prefix = COLORS.get(color, "") + (COLORS["blink"] if blink else "")
+        prefix = color_prefix(*pct_color(pct))
         text = f"{prefix}{pct}%{COLORS['reset']}"
         reset = format_reset(safe_get(data, "rate_limits", key, "resets_at"), now=now)
         if reset:
@@ -755,7 +782,7 @@ Replace the final `return` statement of `render_context_window` with:
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `python3 tests/test_statusline.py -v`
-Expected: PASS, 61 tests.
+Expected: PASS, 65 tests.
 
 - [ ] **Step 6: Verify against a live payload**
 
@@ -923,7 +950,7 @@ The `↑` and `↓` escapes sit in the *literal* portion of their f-strings, exa
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `python3 tests/test_statusline.py -v`
-Expected: PASS, 69 tests.
+Expected: PASS, 73 tests.
 
 - [ ] **Step 7: Verify against the real repo**
 
@@ -1093,7 +1120,7 @@ This adds one `run_cmd` call to `fetch_git_info`, which is already behind the 5-
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `python3 tests/test_statusline.py -v`
-Expected: PASS, 74 tests.
+Expected: PASS, 78 tests.
 
 - [ ] **Step 5: Verify against the real repo**
 
@@ -1208,7 +1235,7 @@ In `main`, immediately after the `raw = ...` try/except block and before the JSO
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `python3 tests/test_statusline.py -v`
-Expected: PASS, 78 tests.
+Expected: PASS, 82 tests.
 
 - [ ] **Step 7: Capture a real payload**
 
@@ -1502,7 +1529,7 @@ python3 tests/test_statusline.py -v
 cat test-payload.json | python3 scripts/statusline.py
 cat test-payload-minimal.json | python3 scripts/statusline.py
 ```
-Expected: 78 tests PASS, and both fixtures render as described in Step 3.
+Expected: 82 tests PASS, and both fixtures render as described in Step 3.
 
 - [ ] **Step 11: Commit**
 
@@ -1520,7 +1547,7 @@ the omit-when-absent path is exercised on every test run."
 
 After Task 8, the whole change is verified by:
 
-1. `python3 tests/test_statusline.py -v` — 78 tests, all passing.
+1. `python3 tests/test_statusline.py -v` — 82 tests, all passing.
 2. `cat test-payload.json | python3 scripts/statusline.py` — every section renders.
 3. `cat test-payload-minimal.json | python3 scripts/statusline.py` — no optional section renders, no dangling separators.
 4. A live session render after `/cc-statusline:setup` redeploys the script, confirming the real payload drives the real output.
@@ -1534,7 +1561,7 @@ After Task 8, the whole change is verified by:
 | Rate limit output + reset countdown | 2, 4 |
 | Worktree output + source precedence | 5 |
 | Absence policy (`str \| None` + `join_segments`) | 3 (mechanism), 3-5 (applied) |
-| `pct_color` | 1 |
+| `pct_color` + `color_prefix` | 1 |
 | `format_duration(max_parts)`, `format_reset` | 2 |
 | `join_segments` | 3 |
 | Repo name derivation + submodule guard | 6 |
