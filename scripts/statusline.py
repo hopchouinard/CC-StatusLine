@@ -22,9 +22,25 @@ COLORS = {
     "white":      "\033[37m",
     "bold_cyan":  "\033[1;36m",
     "bold_white": "\033[1;37m",
+    "bold_red":   "\033[1;31m",
 }
 
 SEP = " | "
+
+# U+2190. A module constant because a backslash escape inside an f-string
+# replacement field is a SyntaxError before Python 3.12.
+ARROW = "←"
+
+# Effort levels, coloured by cost. `max` is bold red rather than blinking:
+# blink means "about to hurt you" in this statusline and is reserved for the
+# >90% context alarm. A max effort level is a choice the user made on purpose.
+EFFORT_COLORS = {
+    "low":    "dim",
+    "medium": "green",
+    "high":   "yellow",
+    "xhigh":  "red",
+    "max":    "bold_red",
+}
 
 # ---------------------------------------------------------------------------
 # Caching — user-isolated under system temp directory
@@ -60,6 +76,11 @@ RESOURCE_TTL = 60
 
 GIT_CACHE = os.path.join(_CACHE_DIR, "git.json")
 GIT_TTL = 5
+
+# Opt-in payload capture. Touch DEBUG_FLAG, trigger a render, read
+# DEBUG_PAYLOAD, delete the flag. Costs one os.path.exists per render.
+DEBUG_FLAG = os.path.expanduser("~/.claude/statusline-debug")
+DEBUG_PAYLOAD = os.path.expanduser("~/.claude/statusline-payload.json")
 
 
 def read_cache(cache_file, ttl_seconds, key=None):
@@ -110,6 +131,16 @@ def c(color, text):
     return f"{COLORS.get(color, '')}{text}{COLORS['reset']}"
 
 
+def join_segments(*segments):
+    """Join truthy segments with SEP, dropping absent ones and their separators.
+
+    This is what makes the absence policy structural: a section with nothing
+    to say returns None and disappears, separator included. It cannot leave a
+    dangling "|" behind because it never contributes one.
+    """
+    return SEP.join(s for s in segments if s)
+
+
 def safe_get(data, *keys, default=None):
     """Safely traverse nested dict keys. Returns default only for missing keys."""
     current = data
@@ -123,24 +154,81 @@ def safe_get(data, *keys, default=None):
     return current
 
 
-def format_duration(ms):
-    """Convert milliseconds to compact human string, omitting zero components."""
+def format_duration(ms, max_parts=None, days=False):
+    """Convert milliseconds to compact human string, omitting zero components.
+
+    max_parts caps how many units are emitted, largest first: 8073s with
+    max_parts=2 is "2h14m" rather than "2h14m33s". It also stops at the first
+    *interior* zero component, because dropping one would silently promote the
+    next unit into its place: 3d0h5m must render "3d", never "3d5m", which sits
+    next to the legitimate "3d5h" and reads as hours at a glance.
+
+    With max_parts=None there is no cap and no interior-zero stop: every
+    non-zero component is emitted and zero components are simply skipped,
+    so 3d0h5m renders "3d5m". The USE line depends on that exact behaviour.
+
+    days=True emits a leading day component instead of rolling days into
+    hours. Defaults to False so existing callers are unaffected.
+    """
     if ms is None:
         return "--"
-    total_s = int(ms) // 1000
+    try:
+        total_s = int(ms) // 1000
+    except (TypeError, ValueError, OverflowError):
+        # int(float("inf")) raises OverflowError, int("nan") ValueError.
+        # A malformed duration is a "--", never a traceback.
+        return "--"
     if total_s < 0:
         return "--"
-    hours = total_s // 3600
+    if days:
+        day_count = total_s // 86400
+        hours = (total_s % 86400) // 3600
+    else:
+        day_count = 0
+        hours = total_s // 3600
     minutes = (total_s % 3600) // 60
     seconds = total_s % 60
-    parts = []
-    if hours > 0:
-        parts.append(f"{hours}h")
-    if minutes > 0:
-        parts.append(f"{minutes}m")
-    if seconds > 0 or not parts:
-        parts.append(f"{seconds}s")
+
+    components = ((day_count, "d"), (hours, "h"), (minutes, "m"), (seconds, "s"))
+    if max_parts is None:
+        parts = [f"{v}{u}" for v, u in components if v > 0]
+    else:
+        parts = []
+        for value, unit in components:
+            if value == 0:
+                if parts:
+                    break       # interior zero: stop rather than close the gap
+                continue        # leading zero: nothing to say yet
+            parts.append(f"{value}{unit}")
+            if len(parts) == max_parts:
+                break
+    if not parts:
+        parts = ["0s"]
     return "".join(parts)
+
+
+def format_reset(resets_at, now=None):
+    """Countdown to a unix epoch timestamp: '2h14m', '3d5h', '45s'.
+
+    Returns None when the timestamp is missing, unparseable, or not in the
+    future — a rate-limit window that has already rolled over has nothing
+    useful to say, and a negative countdown would be worse than silence.
+    """
+    if resets_at is None:
+        return None
+    try:
+        delta = float(resets_at) - (time.time() if now is None else now)
+        # Written as "not > 0" so NaN — which json accepts as a bare literal —
+        # falls out here instead of surviving into format_duration.
+        if not delta > 0:
+            return None
+        if delta >= 60:
+            # whole minutes; seconds are noise here. int(inf) is an
+            # OverflowError, and Infinity is likewise a legal json literal.
+            delta = (int(delta) // 60) * 60
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return format_duration(delta * 1000, max_parts=2, days=True)
 
 
 def format_size(n):
@@ -156,6 +244,33 @@ def format_size(n):
     return str(n)
 
 
+def pct_color(pct):
+    """Map a percentage to (color_name, blink) on the shared threshold ladder.
+
+    Used by the context bar and both rate-limit windows so the three cannot
+    drift apart. Blink is reserved for the >90% alarm.
+    """
+    if pct is None:
+        return ("dim", False)
+    if pct <= 50:
+        return ("green", False)
+    if pct <= 75:
+        return ("yellow", False)
+    if pct <= 90:
+        return ("red", False)
+    return ("red", True)
+
+
+def color_prefix(color, blink):
+    """ANSI prefix for a colour name, with blink layered on when set.
+
+    Kept separate from pct_color so the threshold ladder stays testable as
+    readable ("green", False) pairs rather than opaque escape sequences,
+    while the escape construction itself still lives in exactly one place.
+    """
+    return COLORS.get(color, "") + (COLORS["blink"] if blink else "")
+
+
 def parse_model_name(data):
     """Derive a display name like 'Opus 4.6 (1M context)' from model info."""
     model_id = safe_get(data, "model", "id", default="")
@@ -166,10 +281,10 @@ def parse_model_name(data):
     # Also handle claude-opus-4-6[1m] variant
     name = display_name or "--"
     clean_id = re.sub(r'\[.*\]', '', model_id)  # strip [1m] etc.
-    m = re.match(r'claude-(\w+)-(\d+)-(\d+)', clean_id)
+    m = re.match(r'claude-(\w+)-(\d+)(?:-(\d+))?', clean_id)
     if m:
         family = m.group(1).capitalize()
-        version = f"{m.group(2)}.{m.group(3)}"
+        version = f"{m.group(2)}.{m.group(3)}" if m.group(3) else m.group(2)
         name = f"{family} {version}"
 
     # Append context window info if > 200K
@@ -378,27 +493,67 @@ def get_resource_counts(cwd):
 # Section renderers
 # ---------------------------------------------------------------------------
 
+def effort_segment(data):
+    """'Eff: high' when the model reports a reasoning effort level, else None.
+
+    Absent whenever the current model has no reasoning-effort support.
+
+    The level must be a string: EFFORT_COLORS.get needs a hashable key, and an
+    unexpected dict or list would otherwise take the whole statusline down.
+    """
+    level = safe_get(data, "effort", "level")
+    if not level or not isinstance(level, str):
+        return None
+    return f"{c('dim', 'Eff:')} {c(EFFORT_COLORS.get(level, 'white'), level)}"
+
+
 def render_environment(data):
-    """ENV: CC:{version} | Model: {model} | SK: {skills} | MCP: {mcps} | Hooks: {hooks}"""
+    """ENV: CC:{version} | Model: {model} | Eff: {effort} | SK: {n} | MCP: {n} | Hooks: {n}"""
     version = safe_get(data, "version", default="--")
     model = parse_model_name(data)
     cwd = safe_get(data, "cwd", default=None)
     counts = get_resource_counts(cwd)
 
-    parts = [
-        c("bold_cyan", "ENV:"),
-        " ",
+    return f"{c('bold_cyan', 'ENV:')} " + join_segments(
         f"CC:{c('white', version)}",
-        SEP,
         f"{c('dim', 'Model:')} {c('green', model)}",
-        SEP,
+        effort_segment(data),
         f"{c('dim', 'SK:')} {c('yellow', counts['skills'])}",
-        SEP,
         f"{c('dim', 'MCP:')} {c('yellow', counts['mcp'])}",
-        SEP,
         f"{c('dim', 'Hooks:')} {c('yellow', counts['hooks'])}",
-    ]
-    return "".join(str(p) for p in parts)
+    )
+
+
+RATE_LIMIT_WINDOWS = (("five_hour", "5h"), ("seven_day", "7d"))
+
+
+def rate_limit_segment(data, now=None):
+    """'5h: 42% (2h14m) | 7d: 68% (3d5h)' for Claude.ai subscription limits.
+
+    Absent for API-key users and before the session's first API response.
+    Either window can appear without the other, so each is rendered
+    independently. Percentages above 100 are reported rather than clamped:
+    overage is real, and hiding it would fail the user at the one moment
+    this segment matters.
+    """
+    rendered = []
+    for key, label in RATE_LIMIT_WINDOWS:
+        raw = safe_get(data, "rate_limits", key, "used_percentage")
+        if raw is None:
+            continue
+        try:
+            # round(inf) raises OverflowError and round(nan) ValueError;
+            # json accepts both as bare literals.
+            pct = round(float(raw))
+        except (TypeError, ValueError, OverflowError):
+            continue
+        prefix = color_prefix(*pct_color(pct))
+        text = f"{prefix}{pct}%{COLORS['reset']}"
+        reset = format_reset(safe_get(data, "rate_limits", key, "resets_at"), now=now)
+        if reset:
+            text = f"{text} {c('dim', '(' + reset + ')')}"
+        rendered.append(f"{c('dim', label + ':')} {text}")
+    return join_segments(*rendered) if rendered else None
 
 
 def render_context_window(data):
@@ -408,40 +563,27 @@ def render_context_window(data):
     size_label = format_size(window_size) if window_size else "--"
 
     bar_width = 30
-    if pct is not None:
-        filled = round(pct / 100 * bar_width)
-    else:
-        filled = 0
+    filled = round(pct / 100 * bar_width) if pct is not None else 0
+    filled = max(0, min(bar_width, filled))
 
-    bar_filled = "\u2593" * filled         # ▓
-    bar_empty = "\u2591" * (bar_width - filled)  # ░
+    bar_filled = "▓" * filled                # ▓
+    bar_empty = "░" * (bar_width - filled)   # ░
 
-    # Color threshold
-    if pct is None:
-        bar_color = "dim"
-        pct_str = "--%"
-    elif pct <= 50:
-        bar_color = "green"
-        pct_str = f"{pct}%"
-    elif pct <= 75:
-        bar_color = "yellow"
-        pct_str = f"{pct}%"
-    elif pct <= 90:
-        bar_color = "red"
-        pct_str = f"{pct}%"
-    else:
-        bar_color = "red"
-        pct_str = f"{pct}%"
+    prefix = color_prefix(*pct_color(pct))
+    pct_str = "--%" if pct is None else f"{pct}%"
 
-    # Build colored bar
-    if pct is not None and pct > 90:
-        colored_bar = f"{COLORS['red']}{COLORS['blink']}{bar_filled}{COLORS['reset']}{COLORS['dim']}{bar_empty}{COLORS['reset']}"
-        colored_pct = f"{COLORS['red']}{COLORS['blink']}{pct_str}{COLORS['reset']}"
-    else:
-        colored_bar = f"{COLORS.get(bar_color, '')}{bar_filled}{COLORS['reset']}{COLORS['dim']}{bar_empty}{COLORS['reset']}"
-        colored_pct = c(bar_color, pct_str)
+    colored_bar = (
+        f"{prefix}{bar_filled}{COLORS['reset']}"
+        f"{COLORS['dim']}{bar_empty}{COLORS['reset']}"
+    )
+    colored_pct = f"{prefix}{pct_str}{COLORS['reset']}"
 
-    return f"{c('bold_cyan', 'CTX:')} {colored_bar} {colored_pct} of {c('white', size_label)}"
+    head = f"{colored_bar} {colored_pct} of {c('white', size_label)}"
+    # Label outside the join, matching render_environment and render_git.
+    return f"{c('bold_cyan', 'CTX:')} " + join_segments(
+        head,
+        rate_limit_segment(data),
+    )
 
 
 def render_usage(data):
@@ -486,6 +628,38 @@ def render_usage(data):
 # Git status (cached)
 # ---------------------------------------------------------------------------
 
+def _repo_name(cwd, toplevel):
+    """Repository name, correct even from inside a linked worktree.
+
+    --show-toplevel is the *worktree* directory inside a linked worktree, so
+    it would report the worktree's folder name as the repo. The git common
+    dir resolves to the main repository's .git from anywhere inside one.
+
+    The result is only trustworthy when the common dir is literally named
+    ".git". Inside a submodule it is ".git/modules/<name>", where taking the
+    parent directory would yield "modules". In that case the toplevel
+    basename is already correct.
+
+    --path-format requires Git 2.31+. Any failure falls back to today's
+    behaviour, so the worst case is no regression.
+
+    A repo checked out at a filesystem root makes dirname("/.git") == "/" and
+    basename("/") == "", which would render as an empty but ANSI-coloured —
+    and therefore truthy — segment: "GIT:  | main | ...". The guard is on the
+    derived name, not on the parent path.
+    """
+    common = run_cmd(
+        ["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"]
+    )
+    if common:
+        common = common.rstrip("/\\")
+        if os.path.basename(common) == ".git":
+            name = os.path.basename(os.path.dirname(common))
+            if name:
+                return name
+    return os.path.basename(toplevel)
+
+
 def fetch_git_info(cwd):
     """Gather all git info via subprocess calls."""
     if not cwd:
@@ -496,7 +670,7 @@ def fetch_git_info(cwd):
     if toplevel is None:
         return None
 
-    repo_name = os.path.basename(toplevel)
+    repo_name = _repo_name(cwd, toplevel)
 
     branch = run_cmd(["git", "-C", cwd, "branch", "--show-current"])
     detached = False
@@ -549,73 +723,93 @@ def get_git_info(cwd):
     return info
 
 
+def worktree_segment(data):
+    """'WT: feat-x ← main' when the session is inside a git worktree.
+
+    Two payload fields cover different populations. `worktree` appears only
+    for sessions Claude Code started with --worktree. `workspace.git_worktree`
+    appears whenever the cwd sits inside any linked worktree, including one
+    created by hand with `git worktree add`. Reading both makes the section
+    work either way.
+
+    The segment renders even when the name matches the current branch, which
+    is the common case since Claude Code derives the slug from the branch.
+    The presence of the segment is itself the information.
+
+    Both fields must be strings. Anything else is not a branch name, and
+    interpolating it would print a Python repr into the statusline.
+    """
+    name = safe_get(data, "worktree", "name")
+    origin = safe_get(data, "worktree", "original_branch")
+    if not name:
+        name = safe_get(data, "workspace", "git_worktree")
+        origin = None
+    if not name or not isinstance(name, str):
+        return None
+    text = c("cyan", name)
+    if origin and isinstance(origin, str):
+        text = f"{text} {c('dim', ARROW)} {c('dim', origin)}"
+    return f"{c('dim', 'WT:')} {text}"
+
+
 def render_git(data):
-    """GIT: {repo} | {branch} | Age: {age} | Mod: {dirty} | Staged: {staged} | up/down"""
+    """GIT: {repo} | {branch} | WT: {worktree} | Age | Mod | Staged | up/down"""
     cwd = safe_get(data, "cwd")
     info = get_git_info(cwd)
 
     if info is None:
         return f"{c('bold_cyan', 'GIT:')} {c('dim', '(not a repo)')}"
 
-    repo = c("bold_white", info["repo"])
-
-    # Branch color: green if clean, yellow if dirty
-    if info["dirty"] > 0:
-        branch = c("yellow", info["branch"])
-    else:
-        branch = c("green", info["branch"])
-
-    age = c("dim", info["age"])
-
-    # Mod color: yellow if > 0, dim if 0
-    if info["dirty"] > 0:
-        mod = c("yellow", info["dirty"])
-    else:
-        mod = c("dim", "0")
-
-    # Staged color: green if > 0, dim if 0
-    if info["staged"] > 0:
-        staged = c("green", info["staged"])
-    else:
-        staged = c("dim", "0")
-
-    parts = [
-        c("bold_cyan", "GIT:"),
-        " ",
-        repo,
-        SEP,
-        branch,
-        SEP,
-        f"{c('dim', 'Age:')} {age}",
-        SEP,
-        f"{c('dim', 'Mod:')} {mod}",
-        SEP,
-        f"{c('dim', 'Staged:')} {staged}",
-    ]
+    dirty = info["dirty"]
+    branch = c("yellow" if dirty > 0 else "green", info["branch"])
+    mod = c("yellow", dirty) if dirty > 0 else c("dim", "0")
+    staged = c("green", info["staged"]) if info["staged"] > 0 else c("dim", "0")
 
     if info["has_upstream"]:
         up = info["unpushed"]
         down = info["unpulled"]
-        up_str = c("yellow", f"\u2191{up}") if up > 0 else c("dim", f"\u2191{up}")
-        down_str = c("red", f"\u2193{down}") if down > 0 else c("dim", f"\u2193{down}")
-        parts.append(SEP)
-        parts.append(f"{up_str} {down_str}")
+        up_str = c("yellow", f"↑{up}") if up > 0 else c("dim", f"↑{up}")
+        down_str = c("red", f"↓{down}") if down > 0 else c("dim", f"↓{down}")
+        sync = f"{up_str} {down_str}"
     else:
-        parts.append(SEP)
-        parts.append(c("dim", "(no upstream)"))
+        sync = c("dim", "(no upstream)")
 
-    return "".join(str(p) for p in parts)
+    return f"{c('bold_cyan', 'GIT:')} " + join_segments(
+        c("bold_white", info["repo"]),
+        branch,
+        worktree_segment(data),
+        f"{c('dim', 'Age:')} {c('dim', info['age'])}",
+        f"{c('dim', 'Mod:')} {mod}",
+        f"{c('dim', 'Staged:')} {staged}",
+        sync,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
+def maybe_dump_payload(raw):
+    """Write the raw stdin payload to disk when the debug flag file exists.
+
+    Swallows every failure. Debug tooling must never be capable of breaking
+    the statusline it is meant to diagnose.
+    """
+    try:
+        if os.path.exists(DEBUG_FLAG):
+            with open(DEBUG_PAYLOAD, "w", encoding="utf-8") as f:
+                f.write(raw)
+    except (OSError, UnicodeError):
+        pass
+
+
 def main():
     try:
         raw = sys.stdin.read()
     except Exception:
         raw = ""
+
+    maybe_dump_payload(raw)
 
     try:
         data = json.loads(raw) if raw.strip() else {}

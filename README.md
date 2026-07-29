@@ -5,20 +5,61 @@ A Claude Code plugin that renders a 4-line ANSI-colored statusline dashboard sho
 ## Output
 
 ```
-ENV: CC:2.1.56 | Model: Opus 4.6 (1M context) | SK: 44 | MCP: 5 | Hooks: 7
-CTX: ▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░ 17% of 200K
+ENV: CC:2.1.220 | Model: Opus 5 (1M context) | Eff: high | SK: 44 | MCP: 5 | Hooks: 7
+CTX: ▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░░ 17% of 1M | 5h: 42% (2h14m) | 7d: 68% (3d5h)
 USE: $0.42 | 45m12s | API: 12m3s | +156 -23 lines
-GIT: my-project | main | Age: 25m | Mod: 3 | Staged: 1 | ↑2 ↓0
+GIT: my-project | feat-x | WT: feat-x ← main | Age: 25m | Mod: 3 | Staged: 1 | ↑2 ↓0
 ```
 
 ### Sections
 
 | Line | Content |
 |------|---------|
-| **ENV** | Claude Code version, model name (with context window), skill/MCP/hook counts |
-| **CTX** | Context window usage with color-coded progress bar |
+| **ENV** | Claude Code version, model name (with context window), reasoning effort, skill/MCP/hook counts |
+| **CTX** | Context window usage with color-coded progress bar, plus 5-hour and 7-day subscription limits |
 | **USE** | Session cost, wall-clock duration, API duration, lines added/removed |
-| **GIT** | Repo name, branch, last commit age, modified/staged file counts, unpushed/unpulled |
+| **GIT** | Repo name, branch, worktree, last commit age, modified/staged file counts, unpushed/unpulled |
+
+### Conditional sections
+
+Three sections appear only when Claude Code sends the data, and are omitted
+entirely — separator included — when it does not:
+
+| Section | Appears when |
+|---------|--------------|
+| `Eff: <level>` | the current model supports reasoning effort |
+| `5h:` / `7d:` | you are on a Claude.ai subscription, after the session's first API response |
+| `WT: <name>` | the current directory is inside a git worktree |
+
+The `WT:` section shows the worktree name and the branch it was created from.
+The branch checked out *in* the worktree is already the branch shown earlier on
+the line.
+
+### Debugging a missing section
+
+If a section does not appear and you think it should, capture the raw payload
+Claude Code is sending.
+
+On macOS/Linux:
+
+```bash
+touch ~/.claude/statusline-debug
+# send any message so the statusline re-renders
+cat ~/.claude/statusline-payload.json
+rm ~/.claude/statusline-debug
+```
+
+On Windows (PowerShell):
+
+```powershell
+New-Item -ItemType File -Force "$HOME\.claude\statusline-debug"
+# send any message so the statusline re-renders
+Get-Content "$HOME\.claude\statusline-payload.json"
+Remove-Item "$HOME\.claude\statusline-debug"
+```
+
+The capture only runs while the flag file exists, so delete the flag when you
+are done.
 
 ## Installation
 
@@ -81,12 +122,18 @@ Counts are cached for 60 seconds.
 | Metric | Green | Yellow | Red | Blinking Red |
 |--------|-------|--------|-----|--------------|
 | Context window | 0-50% | 51-75% | 76-90% | >90% |
+| Rate limits (5h, 7d) | 0-50% | 51-75% | 76-90% | >90% |
 | Cost | < $1 | $1-$5 | > $5 | -- |
+
+Effort is colored by cost rather than alarm: `low` dim, `medium` green,
+`high` yellow, `xhigh` red, `max` bold red. It never blinks — blinking is
+reserved for the >90% alarms above.
 
 ## Requirements
 
 - Python 3 (stdlib only)
 - macOS, Linux, or Windows (Windows Terminal recommended for proper ANSI/Unicode rendering)
+- Git 2.31+ for correct repo naming inside linked worktrees (older versions fall back gracefully)
 
 ## Platform Compatibility
 
@@ -126,10 +173,13 @@ CC-StatusLine/
 ├── commands/
 │   ├── setup.md               # /cc-statusline:setup
 │   └── statusline-test.md     # /cc-statusline:statusline-test
+├── tests/
+│   └── test_statusline.py     # Unit + git integration tests
 ├── Docs/
 │   ├── claude-code-statusline-spec.md
 │   └── cc-statusline-plugin-spec.md
-├── test-payload.json          # Sample stdin for manual testing
+├── test-payload.json          # Sample stdin, all optional sections present
+├── test-payload-minimal.json  # Sample stdin, all optional sections absent
 └── README.md
 ```
 
