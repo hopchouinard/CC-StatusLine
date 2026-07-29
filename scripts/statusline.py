@@ -260,10 +260,10 @@ def parse_model_name(data):
     # Also handle claude-opus-4-6[1m] variant
     name = display_name or "--"
     clean_id = re.sub(r'\[.*\]', '', model_id)  # strip [1m] etc.
-    m = re.match(r'claude-(\w+)-(\d+)-(\d+)', clean_id)
+    m = re.match(r'claude-(\w+)-(\d+)(?:-(\d+))?', clean_id)
     if m:
         family = m.group(1).capitalize()
-        version = f"{m.group(2)}.{m.group(3)}"
+        version = f"{m.group(2)}.{m.group(3)}" if m.group(3) else m.group(2)
         name = f"{family} {version}"
 
     # Append context window info if > 200K

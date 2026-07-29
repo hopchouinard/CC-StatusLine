@@ -214,6 +214,39 @@ class TestEffortSegment(unittest.TestCase):
         self.assertIn(sl.COLORS["white"], seg)
 
 
+class TestParseModelName(unittest.TestCase):
+    def test_two_digit_groups_render_dotted_version(self):
+        out = sl.parse_model_name({
+            "model": {"id": "claude-opus-4-6", "display_name": "Opus"},
+        })
+        self.assertEqual(out, "Opus 4.6")
+
+    def test_single_digit_group_renders_bare_version(self):
+        out = sl.parse_model_name({
+            "model": {"id": "claude-opus-5", "display_name": "Opus"},
+        })
+        self.assertEqual(out, "Opus 5")
+
+    def test_bracket_suffix_and_large_context_window(self):
+        out = sl.parse_model_name({
+            "model": {"id": "claude-opus-5[1m]", "display_name": "Opus"},
+            "context_window": {"context_window_size": 1000000},
+        })
+        self.assertEqual(out, "Opus 5 (1M context)")
+
+    def test_sonnet_single_digit_group(self):
+        out = sl.parse_model_name({
+            "model": {"id": "claude-sonnet-5", "display_name": "Sonnet"},
+        })
+        self.assertEqual(out, "Sonnet 5")
+
+    def test_unrecognisable_id_falls_back_to_display_name(self):
+        out = sl.parse_model_name({
+            "model": {"id": "totally-unrecognisable", "display_name": "Mystery Model"},
+        })
+        self.assertEqual(out, "Mystery Model")
+
+
 class TestRenderEnvironment(unittest.TestCase):
     def _render(self, payload):
         return plain(sl.render_environment(payload))

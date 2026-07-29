@@ -1,5 +1,5 @@
 {
-  "cwd": "/home/user/my-project",
+  "cwd": ".",
   "session_id": "abc123",
   "transcript_path": "/tmp/transcript.jsonl",
   "version": "2.1.220",
@@ -44,12 +44,10 @@
   },
   "rate_limits": {
     "five_hour": {
-      "used_percentage": 42.4,
-      "resets_at": 4102444800
+      "used_percentage": 42.4
     },
     "seven_day": {
-      "used_percentage": 68.0,
-      "resets_at": 4102444800
+      "used_percentage": 68.0
     }
   },
   "worktree": {
