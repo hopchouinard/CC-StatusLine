@@ -596,6 +596,33 @@ def render_usage(data):
 # Git status (cached)
 # ---------------------------------------------------------------------------
 
+def _repo_name(cwd, toplevel):
+    """Repository name, correct even from inside a linked worktree.
+
+    --show-toplevel is the *worktree* directory inside a linked worktree, so
+    it would report the worktree's folder name as the repo. The git common
+    dir resolves to the main repository's .git from anywhere inside one.
+
+    The result is only trustworthy when the common dir is literally named
+    ".git". Inside a submodule it is ".git/modules/<name>", where taking the
+    parent directory would yield "modules". In that case the toplevel
+    basename is already correct.
+
+    --path-format requires Git 2.31+. Any failure falls back to today's
+    behaviour, so the worst case is no regression.
+    """
+    common = run_cmd(
+        ["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"]
+    )
+    if common:
+        common = common.rstrip("/\\")
+        if os.path.basename(common) == ".git":
+            parent = os.path.dirname(common)
+            if parent:
+                return os.path.basename(parent)
+    return os.path.basename(toplevel)
+
+
 def fetch_git_info(cwd):
     """Gather all git info via subprocess calls."""
     if not cwd:
@@ -606,7 +633,7 @@ def fetch_git_info(cwd):
     if toplevel is None:
         return None
 
-    repo_name = os.path.basename(toplevel)
+    repo_name = _repo_name(cwd, toplevel)
 
     branch = run_cmd(["git", "-C", cwd, "branch", "--show-current"])
     detached = False

@@ -8,6 +8,9 @@ Run one test:        python3 tests/test_statusline.py TestPctColor.test_zero_is_
 import importlib.util
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -347,6 +350,60 @@ class TestWorktreeSegment(unittest.TestCase):
         # checkout", which is otherwise expensive to notice.
         seg = sl.worktree_segment({"worktree": {"name": "feat-x"}})
         self.assertIsNotNone(seg)
+
+
+def _git(*args, **kw):
+    subprocess.run(["git"] + list(args), check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kw)
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class TestRepoName(unittest.TestCase):
+    """The repo name must survive linked worktrees and submodules."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = self._tmp.name
+        self.addCleanup(self._tmp.cleanup)
+
+    def _new_repo(self, name):
+        path = os.path.join(self.root, name)
+        os.makedirs(path)
+        _git("init", "-q", "-b", "main", path)
+        _git("-C", path, "commit", "-q", "--allow-empty", "-m", "init")
+        return path
+
+    def test_plain_repository(self):
+        repo = self._new_repo("myrepo")
+        self.assertEqual(sl.fetch_git_info(repo)["repo"], "myrepo")
+
+    def test_linked_worktree_reports_the_repository_name(self):
+        repo = self._new_repo("myrepo")
+        wt = os.path.join(self.root, "myrepo-feat-x")
+        _git("-C", repo, "worktree", "add", "-q", "-b", "feat-x", wt)
+        self.assertEqual(sl.fetch_git_info(wt)["repo"], "myrepo")
+
+    def test_subdirectory_of_a_linked_worktree(self):
+        repo = self._new_repo("myrepo")
+        wt = os.path.join(self.root, "myrepo-feat-x")
+        _git("-C", repo, "worktree", "add", "-q", "-b", "feat-x", wt)
+        deep = os.path.join(wt, "sub", "deep")
+        os.makedirs(deep)
+        self.assertEqual(sl.fetch_git_info(deep)["repo"], "myrepo")
+
+    def test_submodule_reports_its_own_name_not_modules(self):
+        child = self._new_repo("child")
+        parent = self._new_repo("parent")
+        _git("-C", parent, "-c", "protocol.file.allow=always",
+             "submodule", "add", "-q", child, "sub")
+        _git("-C", parent, "commit", "-q", "-m", "add sub")
+        self.assertEqual(sl.fetch_git_info(os.path.join(parent, "sub"))["repo"], "sub")
+
+    def test_branch_is_still_the_worktree_branch(self):
+        repo = self._new_repo("myrepo")
+        wt = os.path.join(self.root, "myrepo-feat-x")
+        _git("-C", repo, "worktree", "add", "-q", "-b", "feat-x", wt)
+        self.assertEqual(sl.fetch_git_info(wt)["branch"], "feat-x")
 
 
 if __name__ == "__main__":
