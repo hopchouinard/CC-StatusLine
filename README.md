@@ -38,7 +38,9 @@ the line.
 ### Debugging a missing section
 
 If a section does not appear and you think it should, capture the raw payload
-Claude Code is sending:
+Claude Code is sending.
+
+On macOS/Linux:
 
 ```bash
 touch ~/.claude/statusline-debug
@@ -47,7 +49,17 @@ cat ~/.claude/statusline-payload.json
 rm ~/.claude/statusline-debug
 ```
 
-The capture only runs while the flag file exists.
+On Windows (PowerShell):
+
+```powershell
+New-Item -ItemType File -Force "$HOME\.claude\statusline-debug"
+# send any message so the statusline re-renders
+Get-Content "$HOME\.claude\statusline-payload.json"
+Remove-Item "$HOME\.claude\statusline-debug"
+```
+
+The capture only runs while the flag file exists, so delete the flag when you
+are done.
 
 ## Installation
 

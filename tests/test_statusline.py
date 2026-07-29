@@ -6,14 +6,17 @@ Run one test:        python3 tests/test_statusline.py TestPctColor.test_zero_is_
 """
 
 import importlib.util
+import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.abspath(os.path.join(_HERE, os.pardir))
 _SCRIPT = os.path.join(_HERE, os.pardir, "scripts", "statusline.py")
 
 _spec = importlib.util.spec_from_file_location("statusline", _SCRIPT)
@@ -124,6 +127,65 @@ class TestFormatDuration(unittest.TestCase):
     def test_max_parts_does_not_pad_when_fewer_units_exist(self):
         self.assertEqual(sl.format_duration(45 * 1000, max_parts=2), "45s")
 
+    def test_infinite_duration_is_placeholder_not_an_exception(self):
+        self.assertEqual(sl.format_duration(float("inf")), "--")
+
+    def test_nan_duration_is_placeholder_not_an_exception(self):
+        self.assertEqual(sl.format_duration(float("nan")), "--")
+
+    def test_unparseable_duration_is_placeholder(self):
+        self.assertEqual(sl.format_duration("soon"), "--")
+
+
+class TestFormatDurationInteriorZero(unittest.TestCase):
+    """max_parts must stop at an interior zero rather than close the gap.
+
+    3d0h5m collapsed to "3d5m" sits next to the legitimate "3d5h" and is read
+    as hours. A 7-day rate-limit window spends about an hour a day in it.
+    """
+
+    def test_interior_zero_truncates_instead_of_promoting(self):
+        ms = (3 * 86400 + 0 * 3600 + 5 * 60) * 1000
+        self.assertEqual(sl.format_duration(ms, max_parts=2, days=True), "3d")
+
+    def test_interior_zero_hours_with_only_seconds_left(self):
+        ms = (3 * 86400 + 7) * 1000
+        self.assertEqual(sl.format_duration(ms, max_parts=2, days=True), "3d")
+
+    def test_documented_countdowns_are_unchanged(self):
+        cases = {
+            45: "45s",
+            2820: "47m",
+            8040: "2h14m",
+            277200: "3d5h",
+            604800: "7d",
+        }
+        for seconds, expected in cases.items():
+            with self.subTest(seconds=seconds):
+                self.assertEqual(
+                    sl.format_duration(seconds * 1000, max_parts=2, days=True),
+                    expected,
+                )
+
+    def test_use_line_call_shape_is_bit_for_bit_unchanged(self):
+        # render_usage calls format_duration(ms) with no kwargs. Every one of
+        # these has an interior zero somewhere; none may be truncated.
+        cases = {
+            0: "0s",
+            2712000: "45m12s",
+            (25 * 3600 + 7) * 1000: "25h7s",           # zero minutes
+            (2 * 3600 + 0 * 60 + 0) * 1000: "2h",
+            (90 * 3600 + 0 * 60 + 30) * 1000: "90h30s",
+            723000: "12m3s",
+        }
+        for ms, expected in cases.items():
+            with self.subTest(ms=ms):
+                self.assertEqual(sl.format_duration(ms), expected)
+
+    def test_use_line_renders_an_interior_zero_duration_in_full(self):
+        out = plain(sl.render_usage({"cost": {"total_duration_ms": (25 * 3600 + 7) * 1000}}))
+        self.assertIn("25h7s", out)
+
 
 class TestFormatReset(unittest.TestCase):
     NOW = 1_800_000_000
@@ -157,6 +219,16 @@ class TestFormatReset(unittest.TestCase):
 
     def test_seven_days_does_not_render_as_hours(self):
         self.assertEqual(sl.format_reset(self.NOW + 7 * 86400, now=self.NOW), "7d")
+
+    def test_infinity_is_absent_not_an_exception(self):
+        # json.loads accepts a bare Infinity literal, so this is reachable.
+        self.assertIsNone(sl.format_reset(float("inf"), now=self.NOW))
+
+    def test_nan_is_absent_not_an_exception(self):
+        self.assertIsNone(sl.format_reset(float("nan"), now=self.NOW))
+
+    def test_negative_infinity_is_absent(self):
+        self.assertIsNone(sl.format_reset(float("-inf"), now=self.NOW))
 
 
 class TestJoinSegments(unittest.TestCase):
@@ -213,6 +285,13 @@ class TestEffortSegment(unittest.TestCase):
         self.assertEqual(plain(seg), "Eff: ultra")
         self.assertIn(sl.COLORS["white"], seg)
 
+    def test_non_string_levels_are_absent_not_a_crash(self):
+        # A dict is unhashable: EFFORT_COLORS.get would raise TypeError and
+        # take down every line of the statusline, not just this segment.
+        for level in ({"name": "high"}, ["high"], 3, True, 1.5):
+            with self.subTest(level=level):
+                self.assertIsNone(sl.effort_segment({"effort": {"level": level}}))
+
 
 class TestParseModelName(unittest.TestCase):
     def test_two_digit_groups_render_dotted_version(self):
@@ -248,8 +327,23 @@ class TestParseModelName(unittest.TestCase):
 
 
 class TestRenderEnvironment(unittest.TestCase):
+    def setUp(self):
+        # The real get_resource_counts reads AND WRITES the shared
+        # {tempdir}/claude-statusline-{user}/resources.json that the developer's
+        # own running statusline uses. Calling it here would walk the entire
+        # installed-plugin tree and then poison that cache with counts computed
+        # for cwd=None (project-level resources skipped), leaving the real
+        # statusline under-reporting for a full TTL.
+        _orig = sl.get_resource_counts
+        self.addCleanup(setattr, sl, "get_resource_counts", _orig)
+        sl.get_resource_counts = lambda cwd: {"skills": 1, "mcp": 2, "hooks": 3}
+
     def _render(self, payload):
         return plain(sl.render_environment(payload))
+
+    def test_the_stub_is_actually_in_effect(self):
+        out = self._render({"version": "2.1.220"})
+        self.assertIn("SK: 1 | MCP: 2 | Hooks: 3", out)
 
     def test_effort_sits_between_model_and_skills(self):
         out = self._render({
@@ -330,6 +424,17 @@ class TestRateLimitSegment(unittest.TestCase):
             self._payload(five={"used_percentage": 12.0}), now=self.NOW)
         self.assertNotIn(sl.COLORS["blink"], seg)
 
+    def test_infinite_percentage_is_skipped_not_an_exception(self):
+        self.assertIsNone(self._render(five={"used_percentage": float("inf")}))
+
+    def test_nan_percentage_is_skipped_not_an_exception(self):
+        self.assertIsNone(self._render(five={"used_percentage": float("nan")}))
+
+    def test_infinite_reset_drops_the_parenthetical(self):
+        out = self._render(
+            five={"used_percentage": 42.4, "resets_at": float("inf")})
+        self.assertEqual(out, "5h: 42%")
+
 
 class TestRenderContextWindowWithLimits(unittest.TestCase):
     NOW = 1_800_000_000
@@ -384,10 +489,43 @@ class TestWorktreeSegment(unittest.TestCase):
         seg = sl.worktree_segment({"worktree": {"name": "feat-x"}})
         self.assertIsNotNone(seg)
 
+    def test_non_string_name_is_absent_not_a_python_repr(self):
+        for name in ({"a": 1}, ["feat-x"], 42, 3.5):
+            with self.subTest(name=name):
+                self.assertIsNone(sl.worktree_segment({"worktree": {"name": name}}))
+
+    def test_non_string_workspace_fallback_is_absent(self):
+        self.assertIsNone(
+            sl.worktree_segment({"workspace": {"git_worktree": {"a": 1}}}))
+
+    def test_non_string_original_branch_drops_the_arrow_only(self):
+        seg = sl.worktree_segment(
+            {"worktree": {"name": "feat-x", "original_branch": {"a": 1}}})
+        self.assertEqual(plain(seg), "WT: feat-x")
+
+
+# The ambient git config is not ours to depend on. A global commit.gpgsign
+# fails every commit here; a global core.hooksPath pointing at a hook that
+# reads stdin would hang forever on an inherited terminal. GIT_CONFIG_GLOBAL
+# and GIT_CONFIG_SYSTEM (Git 2.32+) neutralise both; the feature under test
+# already requires 2.31+.
+_GIT_ENV = {
+    **os.environ,
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_SYSTEM": os.devnull,
+    "GIT_AUTHOR_NAME": "t",
+    "GIT_AUTHOR_EMAIL": "t@example.invalid",
+    "GIT_COMMITTER_NAME": "t",
+    "GIT_COMMITTER_EMAIL": "t@example.invalid",
+}
+
 
 def _git(*args, **kw):
-    subprocess.run(["git"] + list(args), check=True,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kw)
+    kw.setdefault("env", _GIT_ENV)
+    # capture_output rather than DEVNULL: CalledProcessError.stderr is the
+    # only thing that makes a failure here diagnosable.
+    subprocess.run(["git"] + list(args), check=True, timeout=30,
+                   stdin=subprocess.DEVNULL, capture_output=True, **kw)
 
 
 @unittest.skipUnless(shutil.which("git"), "git is not installed")
@@ -409,6 +547,16 @@ class TestRepoName(unittest.TestCase):
     def test_plain_repository(self):
         repo = self._new_repo("myrepo")
         self.assertEqual(sl.fetch_git_info(repo)["repo"], "myrepo")
+
+    def test_subdirectory_of_a_plain_repository(self):
+        # The most common real-world position, and the one that needs
+        # --path-format=absolute: from a subdirectory of a plain repo the bare
+        # --git-common-dir answers a RELATIVE "../../.git", whose parent's
+        # basename is the literal string "..".
+        repo = self._new_repo("myrepo")
+        deep = os.path.join(repo, "sub", "deep")
+        os.makedirs(deep)
+        self.assertEqual(sl.fetch_git_info(deep)["repo"], "myrepo")
 
     def test_linked_worktree_reports_the_repository_name(self):
         repo = self._new_repo("myrepo")
@@ -437,6 +585,137 @@ class TestRepoName(unittest.TestCase):
         wt = os.path.join(self.root, "myrepo-feat-x")
         _git("-C", repo, "worktree", "add", "-q", "-b", "feat-x", wt)
         self.assertEqual(sl.fetch_git_info(wt)["branch"], "feat-x")
+
+
+class TestRepoNameNeverEmpty(unittest.TestCase):
+    """An empty repo name is not dropped by join_segments — it is coloured.
+
+    c("bold_white", "") is "\\033[1;37m\\033[0m": non-empty, therefore truthy,
+    therefore kept, therefore "GIT:  | main | ...". The `if parent:` check this
+    replaces looked like it guarded the case and did not, because the empty
+    string appears one step later, at basename("/").
+    """
+
+    def _repo_name(self, common_dir, toplevel):
+        _orig = sl.run_cmd
+        self.addCleanup(setattr, sl, "run_cmd", _orig)
+        sl.run_cmd = lambda cmd, **kw: common_dir
+        return sl._repo_name("/anywhere", toplevel)
+
+    def test_repository_at_a_filesystem_root_falls_back_to_toplevel(self):
+        # dirname("/.git") is "/", and basename("/") is "".
+        self.assertEqual(self._repo_name("/.git", "/srv/checkout"), "checkout")
+
+    def test_normal_common_dir_still_wins_over_toplevel(self):
+        self.assertEqual(self._repo_name("/home/u/myrepo/.git", "/home/u/wt"),
+                         "myrepo")
+
+
+class TestShippedFixturesRenderCleanly(unittest.TestCase):
+    """Pipe the shipped fixtures through main() exactly as Claude Code does.
+
+    The "no dangling separator" rule is this branch's central design
+    invariant and was asserted only as English prose in
+    commands/statusline-test.md. Here it is executable.
+    """
+
+    def _render(self, fixture):
+        with open(os.path.join(_ROOT, fixture), encoding="utf-8") as f:
+            payload = f.read()
+        # Redirect HOME and the temp dir so the child neither reads the
+        # developer's ~/.claude tree nor overwrites the resource cache that
+        # their own running statusline depends on.
+        sandbox = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, sandbox, True)
+        env = {
+            **os.environ,
+            "HOME": sandbox, "USERPROFILE": sandbox,
+            "TMPDIR": sandbox, "TEMP": sandbox, "TMP": sandbox,
+            "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull,
+        }
+        proc = subprocess.run(
+            [sys.executable, _SCRIPT], input=payload, text=True,
+            capture_output=True, timeout=30, cwd=_ROOT, env=env,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("statusline: error", proc.stdout)
+        self.assertNotIn("statusline: parse error", proc.stdout)
+        return [plain(line).strip() for line in proc.stdout.splitlines()]
+
+    def test_both_fixtures_render_four_clean_lines(self):
+        for fixture in ("test-payload.json", "test-payload-minimal.json"):
+            with self.subTest(fixture=fixture):
+                lines = self._render(fixture)
+                self.assertEqual(len(lines), 4, lines)
+                for line in lines:
+                    self.assertFalse(line.endswith("|"), line)
+                    self.assertFalse(line.startswith("|"), line)
+                    self.assertNotIn("| |", line)
+
+    def test_the_full_fixture_exercises_every_optional_section(self):
+        out = "\n".join(self._render("test-payload.json"))
+        self.assertIn("Eff:", out)
+        self.assertIn("5h:", out)
+        self.assertIn("7d:", out)
+        self.assertIn("WT:", out)
+
+    def test_the_minimal_fixture_omits_every_optional_section(self):
+        out = "\n".join(self._render("test-payload-minimal.json"))
+        for absent in ("Eff:", "5h:", "7d:", "WT:"):
+            self.assertNotIn(absent, out)
+
+
+class TestMainNeverRaisesOnHostilePayloads(unittest.TestCase):
+    """Payload shapes that used to reach the last-resort handler in __main__.
+
+    json.loads accepts bare Infinity and NaN literals, and nothing validates
+    the types inside the payload, so each of these arrived as a live value.
+    """
+
+    HOSTILE = {
+        "effort_level_is_a_dict": {"effort": {"level": {"name": "high"}}},
+        "worktree_name_is_a_dict": {"worktree": {"name": {"a": 1}}},
+        "original_branch_is_a_dict":
+            {"worktree": {"name": "feat-x", "original_branch": {"a": 1}}},
+        "duration_is_a_string": {"cost": {"total_duration_ms": "soon"}},
+    }
+
+    RAW_HOSTILE = {
+        # Written as raw text: these literals have no Python-side equivalent
+        # that survives json.dumps.
+        "infinite_reset":
+            '{"cwd":".","rate_limits":{"five_hour":'
+            '{"used_percentage":42,"resets_at":Infinity}}}',
+        "nan_reset":
+            '{"cwd":".","rate_limits":{"five_hour":'
+            '{"used_percentage":42,"resets_at":NaN}}}',
+        "infinite_percentage":
+            '{"cwd":".","rate_limits":{"five_hour":{"used_percentage":Infinity}}}',
+    }
+
+    def _assert_four_normal_lines(self, raw):
+        sandbox = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, sandbox, True)
+        env = {**os.environ, "HOME": sandbox, "USERPROFILE": sandbox,
+               "TMPDIR": sandbox, "TEMP": sandbox, "TMP": sandbox}
+        proc = subprocess.run(
+            [sys.executable, _SCRIPT], input=raw, text=True,
+            capture_output=True, timeout=30, cwd=_ROOT, env=env,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("statusline: error", proc.stdout)
+        self.assertEqual(len(proc.stdout.splitlines()), 4, proc.stdout)
+
+    def test_typed_payloads(self):
+        for name, payload in self.HOSTILE.items():
+            with self.subTest(name=name):
+                payload = {"cwd": ".", **payload}
+                self._assert_four_normal_lines(json.dumps(payload))
+
+    def test_non_finite_json_literals(self):
+        for name, raw in self.RAW_HOSTILE.items():
+            with self.subTest(name=name):
+                self._assert_four_normal_lines(raw)
 
 
 class TestPayloadDebugCapture(unittest.TestCase):

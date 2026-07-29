@@ -32,3 +32,8 @@ Show the raw output of both to the user. If either fails, show the error.
 The full payload exercises every section. The minimal payload has no effort,
 no rate limits, and no worktree, so those sections must be absent — check that
 no line ends in a separator and that no `| |` appears anywhere.
+
+Both fixtures set `"cwd": "."`, so the GIT line reflects whatever directory you
+run the command from: run it from inside a git repository or that line will
+just read `GIT: (not a repo)`. The `WT:` section comes from the payload rather
+than from git, so it renders for the full fixture either way.

@@ -158,14 +158,25 @@ def format_duration(ms, max_parts=None, days=False):
     """Convert milliseconds to compact human string, omitting zero components.
 
     max_parts caps how many units are emitted, largest first: 8073s with
-    max_parts=2 is "2h14m" rather than "2h14m33s".
+    max_parts=2 is "2h14m" rather than "2h14m33s". It also stops at the first
+    *interior* zero component, because dropping one would silently promote the
+    next unit into its place: 3d0h5m must render "3d", never "3d5m", which sits
+    next to the legitimate "3d5h" and reads as hours at a glance.
+
+    With max_parts=None every non-zero component is emitted, zeros and all —
+    the USE line depends on that exact behaviour.
 
     days=True emits a leading day component instead of rolling days into
     hours. Defaults to False so existing callers are unaffected.
     """
     if ms is None:
         return "--"
-    total_s = int(ms) // 1000
+    try:
+        total_s = int(ms) // 1000
+    except (TypeError, ValueError, OverflowError):
+        # int(float("inf")) raises OverflowError, int("nan") ValueError.
+        # A malformed duration is a "--", never a traceback.
+        return "--"
     if total_s < 0:
         return "--"
     if days:
@@ -176,17 +187,22 @@ def format_duration(ms, max_parts=None, days=False):
         hours = total_s // 3600
     minutes = (total_s % 3600) // 60
     seconds = total_s % 60
-    parts = []
-    if day_count > 0:
-        parts.append(f"{day_count}d")
-    if hours > 0:
-        parts.append(f"{hours}h")
-    if minutes > 0:
-        parts.append(f"{minutes}m")
-    if seconds > 0 or not parts:
-        parts.append(f"{seconds}s")
-    if max_parts is not None:
-        parts = parts[:max_parts]
+
+    components = ((day_count, "d"), (hours, "h"), (minutes, "m"), (seconds, "s"))
+    if max_parts is None:
+        parts = [f"{v}{u}" for v, u in components if v > 0]
+    else:
+        parts = []
+        for value, unit in components:
+            if value == 0:
+                if parts:
+                    break       # interior zero: stop rather than close the gap
+                continue        # leading zero: nothing to say yet
+            parts.append(f"{value}{unit}")
+            if len(parts) == max_parts:
+                break
+    if not parts:
+        parts = ["0s"]
     return "".join(parts)
 
 
@@ -201,12 +217,16 @@ def format_reset(resets_at, now=None):
         return None
     try:
         delta = float(resets_at) - (time.time() if now is None else now)
-    except (TypeError, ValueError):
+        # Written as "not > 0" so NaN — which json accepts as a bare literal —
+        # falls out here instead of surviving into format_duration.
+        if not delta > 0:
+            return None
+        if delta >= 60:
+            # whole minutes; seconds are noise here. int(inf) is an
+            # OverflowError, and Infinity is likewise a legal json literal.
+            delta = (int(delta) // 60) * 60
+    except (TypeError, ValueError, OverflowError):
         return None
-    if delta <= 0:
-        return None
-    if delta >= 60:
-        delta = (int(delta) // 60) * 60  # whole minutes; seconds are noise here
     return format_duration(delta * 1000, max_parts=2, days=True)
 
 
@@ -476,9 +496,12 @@ def effort_segment(data):
     """'Eff: high' when the model reports a reasoning effort level, else None.
 
     Absent whenever the current model has no reasoning-effort support.
+
+    The level must be a string: EFFORT_COLORS.get needs a hashable key, and an
+    unexpected dict or list would otherwise take the whole statusline down.
     """
     level = safe_get(data, "effort", "level")
-    if not level:
+    if not level or not isinstance(level, str):
         return None
     return f"{c('dim', 'Eff:')} {c(EFFORT_COLORS.get(level, 'white'), level)}"
 
@@ -518,8 +541,10 @@ def rate_limit_segment(data, now=None):
         if raw is None:
             continue
         try:
+            # round(inf) raises OverflowError and round(nan) ValueError;
+            # json accepts both as bare literals.
             pct = round(float(raw))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
         prefix = color_prefix(*pct_color(pct))
         text = f"{prefix}{pct}%{COLORS['reset']}"
@@ -552,11 +577,12 @@ def render_context_window(data):
     )
     colored_pct = f"{prefix}{pct_str}{COLORS['reset']}"
 
-    head = (
-        f"{c('bold_cyan', 'CTX:')} {colored_bar} {colored_pct} "
-        f"of {c('white', size_label)}"
+    head = f"{colored_bar} {colored_pct} of {c('white', size_label)}"
+    # Label outside the join, matching render_environment and render_git.
+    return f"{c('bold_cyan', 'CTX:')} " + join_segments(
+        head,
+        rate_limit_segment(data),
     )
-    return join_segments(head, rate_limit_segment(data))
 
 
 def render_usage(data):
@@ -615,6 +641,11 @@ def _repo_name(cwd, toplevel):
 
     --path-format requires Git 2.31+. Any failure falls back to today's
     behaviour, so the worst case is no regression.
+
+    A repo checked out at a filesystem root makes dirname("/.git") == "/" and
+    basename("/") == "", which would render as an empty but ANSI-coloured —
+    and therefore truthy — segment: "GIT:  | main | ...". The guard is on the
+    derived name, not on the parent path.
     """
     common = run_cmd(
         ["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"]
@@ -622,9 +653,9 @@ def _repo_name(cwd, toplevel):
     if common:
         common = common.rstrip("/\\")
         if os.path.basename(common) == ".git":
-            parent = os.path.dirname(common)
-            if parent:
-                return os.path.basename(parent)
+            name = os.path.basename(os.path.dirname(common))
+            if name:
+                return name
     return os.path.basename(toplevel)
 
 
@@ -703,16 +734,19 @@ def worktree_segment(data):
     The segment renders even when the name matches the current branch, which
     is the common case since Claude Code derives the slug from the branch.
     The presence of the segment is itself the information.
+
+    Both fields must be strings. Anything else is not a branch name, and
+    interpolating it would print a Python repr into the statusline.
     """
     name = safe_get(data, "worktree", "name")
     origin = safe_get(data, "worktree", "original_branch")
     if not name:
         name = safe_get(data, "workspace", "git_worktree")
         origin = None
-    if not name:
+    if not name or not isinstance(name, str):
         return None
     text = c("cyan", name)
-    if origin:
+    if origin and isinstance(origin, str):
         text = f"{text} {c('dim', ARROW)} {c('dim', origin)}"
     return f"{c('dim', 'WT:')} {text}"
 
