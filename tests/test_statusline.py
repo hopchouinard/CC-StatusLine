@@ -96,5 +96,65 @@ class TestRenderContextWindowRefactor(unittest.TestCase):
                          "CTX: " + "▓" * 5 + "░" * 25 + " 17% of --")
 
 
+class TestFormatDuration(unittest.TestCase):
+    def test_existing_behaviour_is_unchanged(self):
+        self.assertEqual(sl.format_duration(2712000), "45m12s")
+
+    def test_none_is_placeholder(self):
+        self.assertEqual(sl.format_duration(None), "--")
+
+    def test_negative_is_placeholder(self):
+        self.assertEqual(sl.format_duration(-1000), "--")
+
+    def test_zero_is_zero_seconds(self):
+        self.assertEqual(sl.format_duration(0), "0s")
+
+    def test_days_are_rolled_into_hours_by_default(self):
+        self.assertEqual(sl.format_duration(90000 * 1000), "25h")
+
+    def test_days_flag_emits_a_day_component(self):
+        self.assertEqual(sl.format_duration(90000 * 1000, days=True), "1d1h")
+
+    def test_max_parts_caps_the_units(self):
+        self.assertEqual(sl.format_duration(8073 * 1000, max_parts=2), "2h14m")
+
+    def test_max_parts_does_not_pad_when_fewer_units_exist(self):
+        self.assertEqual(sl.format_duration(45 * 1000, max_parts=2), "45s")
+
+
+class TestFormatReset(unittest.TestCase):
+    NOW = 1_800_000_000
+
+    def test_missing_timestamp(self):
+        self.assertIsNone(sl.format_reset(None, now=self.NOW))
+
+    def test_past_timestamp(self):
+        self.assertIsNone(sl.format_reset(self.NOW - 60, now=self.NOW))
+
+    def test_exactly_now(self):
+        self.assertIsNone(sl.format_reset(self.NOW, now=self.NOW))
+
+    def test_unparseable_timestamp(self):
+        self.assertIsNone(sl.format_reset("not-a-number", now=self.NOW))
+
+    def test_under_a_minute_keeps_seconds(self):
+        self.assertEqual(sl.format_reset(self.NOW + 45, now=self.NOW), "45s")
+
+    def test_minutes_drop_noisy_seconds(self):
+        # 2832s is 47m12s; the seconds are noise on a countdown this long.
+        self.assertEqual(sl.format_reset(self.NOW + 2832, now=self.NOW), "47m")
+
+    def test_hours_and_minutes(self):
+        # 8073s is 2h14m33s.
+        self.assertEqual(sl.format_reset(self.NOW + 8073, now=self.NOW), "2h14m")
+
+    def test_days_and_hours(self):
+        # 277200s is 3d5h exactly.
+        self.assertEqual(sl.format_reset(self.NOW + 277200, now=self.NOW), "3d5h")
+
+    def test_seven_days_does_not_render_as_hours(self):
+        self.assertEqual(sl.format_reset(self.NOW + 7 * 86400, now=self.NOW), "7d")
+
+
 if __name__ == "__main__":
     unittest.main()

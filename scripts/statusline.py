@@ -123,24 +123,60 @@ def safe_get(data, *keys, default=None):
     return current
 
 
-def format_duration(ms):
-    """Convert milliseconds to compact human string, omitting zero components."""
+def format_duration(ms, max_parts=None, days=False):
+    """Convert milliseconds to compact human string, omitting zero components.
+
+    max_parts caps how many units are emitted, largest first: 8073s with
+    max_parts=2 is "2h14m" rather than "2h14m33s".
+
+    days=True emits a leading day component instead of rolling days into
+    hours. Defaults to False so existing callers are unaffected.
+    """
     if ms is None:
         return "--"
     total_s = int(ms) // 1000
     if total_s < 0:
         return "--"
-    hours = total_s // 3600
+    if days:
+        day_count = total_s // 86400
+        hours = (total_s % 86400) // 3600
+    else:
+        day_count = 0
+        hours = total_s // 3600
     minutes = (total_s % 3600) // 60
     seconds = total_s % 60
     parts = []
+    if day_count > 0:
+        parts.append(f"{day_count}d")
     if hours > 0:
         parts.append(f"{hours}h")
     if minutes > 0:
         parts.append(f"{minutes}m")
     if seconds > 0 or not parts:
         parts.append(f"{seconds}s")
+    if max_parts is not None:
+        parts = parts[:max_parts]
     return "".join(parts)
+
+
+def format_reset(resets_at, now=None):
+    """Countdown to a unix epoch timestamp: '2h14m', '3d5h', '45s'.
+
+    Returns None when the timestamp is missing, unparseable, or not in the
+    future — a rate-limit window that has already rolled over has nothing
+    useful to say, and a negative countdown would be worse than silence.
+    """
+    if resets_at is None:
+        return None
+    try:
+        delta = float(resets_at) - (time.time() if now is None else now)
+    except (TypeError, ValueError):
+        return None
+    if delta <= 0:
+        return None
+    if delta >= 60:
+        delta = (int(delta) // 60) * 60  # whole minutes; seconds are noise here
+    return format_duration(delta * 1000, max_parts=2, days=True)
 
 
 def format_size(n):
