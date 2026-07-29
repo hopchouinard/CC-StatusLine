@@ -491,6 +491,36 @@ def render_environment(data):
     )
 
 
+RATE_LIMIT_WINDOWS = (("five_hour", "5h"), ("seven_day", "7d"))
+
+
+def rate_limit_segment(data, now=None):
+    """'5h: 42% (2h14m) | 7d: 68% (3d5h)' for Claude.ai subscription limits.
+
+    Absent for API-key users and before the session's first API response.
+    Either window can appear without the other, so each is rendered
+    independently. Percentages above 100 are reported rather than clamped:
+    overage is real, and hiding it would fail the user at the one moment
+    this segment matters.
+    """
+    rendered = []
+    for key, label in RATE_LIMIT_WINDOWS:
+        raw = safe_get(data, "rate_limits", key, "used_percentage")
+        if raw is None:
+            continue
+        try:
+            pct = round(float(raw))
+        except (TypeError, ValueError):
+            continue
+        prefix = color_prefix(*pct_color(pct))
+        text = f"{prefix}{pct}%{COLORS['reset']}"
+        reset = format_reset(safe_get(data, "rate_limits", key, "resets_at"), now=now)
+        if reset:
+            text = f"{text} {c('dim', '(' + reset + ')')}"
+        rendered.append(f"{c('dim', label + ':')} {text}")
+    return join_segments(*rendered) if rendered else None
+
+
 def render_context_window(data):
     """CTX: {progress_bar} {pct}% of {size}"""
     pct = safe_get(data, "context_window", "used_percentage")
@@ -513,10 +543,11 @@ def render_context_window(data):
     )
     colored_pct = f"{prefix}{pct_str}{COLORS['reset']}"
 
-    return (
+    head = (
         f"{c('bold_cyan', 'CTX:')} {colored_bar} {colored_pct} "
         f"of {c('white', size_label)}"
     )
+    return join_segments(head, rate_limit_segment(data))
 
 
 def render_usage(data):

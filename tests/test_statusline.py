@@ -233,5 +233,83 @@ class TestRenderEnvironment(unittest.TestCase):
         self.assertNotIn("|  |", out)
 
 
+class TestRateLimitSegment(unittest.TestCase):
+    NOW = 1_800_000_000
+
+    def _payload(self, five=None, seven=None):
+        limits = {}
+        if five is not None:
+            limits["five_hour"] = five
+        if seven is not None:
+            limits["seven_day"] = seven
+        return {"rate_limits": limits} if limits else {}
+
+    def _render(self, **kw):
+        return plain(sl.rate_limit_segment(self._payload(**kw), now=self.NOW))
+
+    def test_absent_field(self):
+        self.assertIsNone(sl.rate_limit_segment({}, now=self.NOW))
+
+    def test_empty_object(self):
+        self.assertIsNone(sl.rate_limit_segment({"rate_limits": {}}, now=self.NOW))
+
+    def test_both_windows(self):
+        out = self._render(
+            five={"used_percentage": 42.4, "resets_at": self.NOW + 8073},
+            seven={"used_percentage": 68.0, "resets_at": self.NOW + 277200},
+        )
+        self.assertEqual(out, "5h: 42% (2h14m) | 7d: 68% (3d5h)")
+
+    def test_only_five_hour(self):
+        out = self._render(five={"used_percentage": 42.4, "resets_at": self.NOW + 8073})
+        self.assertEqual(out, "5h: 42% (2h14m)")
+
+    def test_only_seven_day(self):
+        out = self._render(seven={"used_percentage": 68.0, "resets_at": self.NOW + 277200})
+        self.assertEqual(out, "7d: 68% (3d5h)")
+
+    def test_float_percentage_is_rounded(self):
+        self.assertEqual(self._render(five={"used_percentage": 42.6}), "5h: 43%")
+
+    def test_missing_reset_drops_the_parenthetical(self):
+        self.assertEqual(self._render(five={"used_percentage": 42.4}), "5h: 42%")
+
+    def test_past_reset_drops_the_parenthetical(self):
+        out = self._render(five={"used_percentage": 42.4, "resets_at": self.NOW - 10})
+        self.assertEqual(out, "5h: 42%")
+
+    def test_overage_is_reported_not_clamped(self):
+        self.assertEqual(self._render(five={"used_percentage": 104.2}), "5h: 104%")
+
+    def test_unparseable_percentage_is_skipped(self):
+        self.assertIsNone(self._render(five={"used_percentage": "lots"}))
+
+    def test_above_90_blinks(self):
+        seg = sl.rate_limit_segment(
+            self._payload(five={"used_percentage": 95.0}), now=self.NOW)
+        self.assertIn(sl.COLORS["blink"], seg)
+
+    def test_below_50_does_not_blink(self):
+        seg = sl.rate_limit_segment(
+            self._payload(five={"used_percentage": 12.0}), now=self.NOW)
+        self.assertNotIn(sl.COLORS["blink"], seg)
+
+
+class TestRenderContextWindowWithLimits(unittest.TestCase):
+    NOW = 1_800_000_000
+
+    def test_limits_are_appended(self):
+        out = plain(sl.render_context_window({
+            "context_window": {"used_percentage": 17, "context_window_size": 200000},
+            "rate_limits": {"five_hour": {"used_percentage": 42.0}},
+        }))
+        self.assertTrue(out.endswith("of 200K | 5h: 42%"), out)
+
+    def test_no_trailing_separator_without_limits(self):
+        out = plain(sl.render_context_window(
+            {"context_window": {"used_percentage": 17, "context_window_size": 200000}}))
+        self.assertTrue(out.endswith("of 200K"), out)
+
+
 if __name__ == "__main__":
     unittest.main()
