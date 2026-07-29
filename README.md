@@ -1,6 +1,6 @@
 # CC-StatusLine
 
-A Claude Code plugin that renders a 4-line ANSI-colored statusline dashboard showing environment info, context window usage, session cost, and git status.
+A Claude Code plugin that renders a 4-line ANSI-colored statusline dashboard showing environment info and reasoning effort, context window usage and subscription rate limits, session cost, and git and worktree status.
 
 ## Output
 
