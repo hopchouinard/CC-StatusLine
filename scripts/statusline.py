@@ -156,6 +156,33 @@ def format_size(n):
     return str(n)
 
 
+def pct_color(pct):
+    """Map a percentage to (color_name, blink) on the shared threshold ladder.
+
+    Used by the context bar and both rate-limit windows so the three cannot
+    drift apart. Blink is reserved for the >90% alarm.
+    """
+    if pct is None:
+        return ("dim", False)
+    if pct <= 50:
+        return ("green", False)
+    if pct <= 75:
+        return ("yellow", False)
+    if pct <= 90:
+        return ("red", False)
+    return ("red", True)
+
+
+def color_prefix(color, blink):
+    """ANSI prefix for a colour name, with blink layered on when set.
+
+    Kept separate from pct_color so the threshold ladder stays testable as
+    readable ("green", False) pairs rather than opaque escape sequences,
+    while the escape construction itself still lives in exactly one place.
+    """
+    return COLORS.get(color, "") + (COLORS["blink"] if blink else "")
+
+
 def parse_model_name(data):
     """Derive a display name like 'Opus 4.6 (1M context)' from model info."""
     model_id = safe_get(data, "model", "id", default="")
@@ -408,40 +435,25 @@ def render_context_window(data):
     size_label = format_size(window_size) if window_size else "--"
 
     bar_width = 30
-    if pct is not None:
-        filled = round(pct / 100 * bar_width)
-    else:
-        filled = 0
+    filled = round(pct / 100 * bar_width) if pct is not None else 0
+    filled = max(0, min(bar_width, filled))
 
-    bar_filled = "\u2593" * filled         # ▓
-    bar_empty = "\u2591" * (bar_width - filled)  # ░
+    bar_filled = "▓" * filled                # ▓
+    bar_empty = "░" * (bar_width - filled)   # ░
 
-    # Color threshold
-    if pct is None:
-        bar_color = "dim"
-        pct_str = "--%"
-    elif pct <= 50:
-        bar_color = "green"
-        pct_str = f"{pct}%"
-    elif pct <= 75:
-        bar_color = "yellow"
-        pct_str = f"{pct}%"
-    elif pct <= 90:
-        bar_color = "red"
-        pct_str = f"{pct}%"
-    else:
-        bar_color = "red"
-        pct_str = f"{pct}%"
+    prefix = color_prefix(*pct_color(pct))
+    pct_str = "--%" if pct is None else f"{pct}%"
 
-    # Build colored bar
-    if pct is not None and pct > 90:
-        colored_bar = f"{COLORS['red']}{COLORS['blink']}{bar_filled}{COLORS['reset']}{COLORS['dim']}{bar_empty}{COLORS['reset']}"
-        colored_pct = f"{COLORS['red']}{COLORS['blink']}{pct_str}{COLORS['reset']}"
-    else:
-        colored_bar = f"{COLORS.get(bar_color, '')}{bar_filled}{COLORS['reset']}{COLORS['dim']}{bar_empty}{COLORS['reset']}"
-        colored_pct = c(bar_color, pct_str)
+    colored_bar = (
+        f"{prefix}{bar_filled}{COLORS['reset']}"
+        f"{COLORS['dim']}{bar_empty}{COLORS['reset']}"
+    )
+    colored_pct = f"{prefix}{pct_str}{COLORS['reset']}"
 
-    return f"{c('bold_cyan', 'CTX:')} {colored_bar} {colored_pct} of {c('white', size_label)}"
+    return (
+        f"{c('bold_cyan', 'CTX:')} {colored_bar} {colored_pct} "
+        f"of {c('white', size_label)}"
+    )
 
 
 def render_usage(data):
