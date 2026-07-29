@@ -77,6 +77,11 @@ RESOURCE_TTL = 60
 GIT_CACHE = os.path.join(_CACHE_DIR, "git.json")
 GIT_TTL = 5
 
+# Opt-in payload capture. Touch DEBUG_FLAG, trigger a render, read
+# DEBUG_PAYLOAD, delete the flag. Costs one os.path.exists per render.
+DEBUG_FLAG = os.path.expanduser("~/.claude/statusline-debug")
+DEBUG_PAYLOAD = os.path.expanduser("~/.claude/statusline-payload.json")
+
 
 def read_cache(cache_file, ttl_seconds, key=None):
     """Return cached data if fresh, else None."""
@@ -749,11 +754,27 @@ def render_git(data):
 # Main
 # ---------------------------------------------------------------------------
 
+def maybe_dump_payload(raw):
+    """Write the raw stdin payload to disk when the debug flag file exists.
+
+    Swallows every failure. Debug tooling must never be capable of breaking
+    the statusline it is meant to diagnose.
+    """
+    try:
+        if os.path.exists(DEBUG_FLAG):
+            with open(DEBUG_PAYLOAD, "w", encoding="utf-8") as f:
+                f.write(raw)
+    except OSError:
+        pass
+
+
 def main():
     try:
         raw = sys.stdin.read()
     except Exception:
         raw = ""
+
+    maybe_dump_payload(raw)
 
     try:
         data = json.loads(raw) if raw.strip() else {}

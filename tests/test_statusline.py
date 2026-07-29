@@ -406,5 +406,38 @@ class TestRepoName(unittest.TestCase):
         self.assertEqual(sl.fetch_git_info(wt)["branch"], "feat-x")
 
 
+class TestPayloadDebugCapture(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.flag = os.path.join(self._tmp.name, "statusline-debug")
+        self.out = os.path.join(self._tmp.name, "statusline-payload.json")
+        original = (sl.DEBUG_FLAG, sl.DEBUG_PAYLOAD)
+        sl.DEBUG_FLAG, sl.DEBUG_PAYLOAD = self.flag, self.out
+        self.addCleanup(lambda: setattr(sl, "DEBUG_PAYLOAD", original[1]))
+        self.addCleanup(lambda: setattr(sl, "DEBUG_FLAG", original[0]))
+
+    def test_writes_the_payload_when_the_flag_exists(self):
+        open(self.flag, "w").close()
+        sl.maybe_dump_payload('{"a": 1}')
+        with open(self.out, encoding="utf-8") as f:
+            self.assertEqual(f.read(), '{"a": 1}')
+
+    def test_writes_nothing_without_the_flag(self):
+        sl.maybe_dump_payload('{"a": 1}')
+        self.assertFalse(os.path.exists(self.out))
+
+    def test_unwritable_destination_never_raises(self):
+        open(self.flag, "w").close()
+        sl.DEBUG_PAYLOAD = os.path.join(self.out, "nope", "payload.json")
+        sl.maybe_dump_payload('{"a": 1}')  # must not raise
+
+    def test_non_utf8_safe_content_round_trips(self):
+        open(self.flag, "w").close()
+        sl.maybe_dump_payload('{"branch": "café ← main"}')
+        with open(self.out, encoding="utf-8") as f:
+            self.assertIn("café", f.read())
+
+
 if __name__ == "__main__":
     unittest.main()
