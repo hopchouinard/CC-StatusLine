@@ -27,6 +27,10 @@ COLORS = {
 
 SEP = " | "
 
+# U+2190. A module constant because a backslash escape inside an f-string
+# replacement field is a SyntaxError before Python 3.12.
+ARROW = "←"
+
 # Effort levels, coloured by cost. `max` is bold red rather than blinking:
 # blink means "about to hurt you" in this statusline and is reserved for the
 # >90% context alarm. A max effort level is a choice the user made on purpose.
@@ -655,62 +659,63 @@ def get_git_info(cwd):
     return info
 
 
+def worktree_segment(data):
+    """'WT: feat-x ← main' when the session is inside a git worktree.
+
+    Two payload fields cover different populations. `worktree` appears only
+    for sessions Claude Code started with --worktree. `workspace.git_worktree`
+    appears whenever the cwd sits inside any linked worktree, including one
+    created by hand with `git worktree add`. Reading both makes the section
+    work either way.
+
+    The segment renders even when the name matches the current branch, which
+    is the common case since Claude Code derives the slug from the branch.
+    The presence of the segment is itself the information.
+    """
+    name = safe_get(data, "worktree", "name")
+    origin = safe_get(data, "worktree", "original_branch")
+    if not name:
+        name = safe_get(data, "workspace", "git_worktree")
+        origin = None
+    if not name:
+        return None
+    text = c("cyan", name)
+    if origin:
+        text = f"{text} {c('dim', ARROW)} {c('dim', origin)}"
+    return f"{c('dim', 'WT:')} {text}"
+
+
 def render_git(data):
-    """GIT: {repo} | {branch} | Age: {age} | Mod: {dirty} | Staged: {staged} | up/down"""
+    """GIT: {repo} | {branch} | WT: {worktree} | Age | Mod | Staged | up/down"""
     cwd = safe_get(data, "cwd")
     info = get_git_info(cwd)
 
     if info is None:
         return f"{c('bold_cyan', 'GIT:')} {c('dim', '(not a repo)')}"
 
-    repo = c("bold_white", info["repo"])
-
-    # Branch color: green if clean, yellow if dirty
-    if info["dirty"] > 0:
-        branch = c("yellow", info["branch"])
-    else:
-        branch = c("green", info["branch"])
-
-    age = c("dim", info["age"])
-
-    # Mod color: yellow if > 0, dim if 0
-    if info["dirty"] > 0:
-        mod = c("yellow", info["dirty"])
-    else:
-        mod = c("dim", "0")
-
-    # Staged color: green if > 0, dim if 0
-    if info["staged"] > 0:
-        staged = c("green", info["staged"])
-    else:
-        staged = c("dim", "0")
-
-    parts = [
-        c("bold_cyan", "GIT:"),
-        " ",
-        repo,
-        SEP,
-        branch,
-        SEP,
-        f"{c('dim', 'Age:')} {age}",
-        SEP,
-        f"{c('dim', 'Mod:')} {mod}",
-        SEP,
-        f"{c('dim', 'Staged:')} {staged}",
-    ]
+    dirty = info["dirty"]
+    branch = c("yellow" if dirty > 0 else "green", info["branch"])
+    mod = c("yellow", dirty) if dirty > 0 else c("dim", "0")
+    staged = c("green", info["staged"]) if info["staged"] > 0 else c("dim", "0")
 
     if info["has_upstream"]:
         up = info["unpushed"]
         down = info["unpulled"]
-        up_str = c("yellow", f"\u2191{up}") if up > 0 else c("dim", f"\u2191{up}")
-        down_str = c("red", f"\u2193{down}") if down > 0 else c("dim", f"\u2193{down}")
-        parts.append(SEP)
-        parts.append(f"{up_str} {down_str}")
+        up_str = c("yellow", f"↑{up}") if up > 0 else c("dim", f"↑{up}")
+        down_str = c("red", f"↓{down}") if down > 0 else c("dim", f"↓{down}")
+        sync = f"{up_str} {down_str}"
     else:
-        parts.append(SEP)
-        parts.append(c("dim", "(no upstream)"))
+        sync = c("dim", "(no upstream)")
 
-    return "".join(str(p) for p in parts)
+    return f"{c('bold_cyan', 'GIT:')} " + join_segments(
+        c("bold_white", info["repo"]),
+        branch,
+        worktree_segment(data),
+        f"{c('dim', 'Age:')} {c('dim', info['age'])}",
+        f"{c('dim', 'Mod:')} {mod}",
+        f"{c('dim', 'Staged:')} {staged}",
+        sync,
+    )
 
 
 # ---------------------------------------------------------------------------

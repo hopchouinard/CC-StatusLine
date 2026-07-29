@@ -311,5 +311,43 @@ class TestRenderContextWindowWithLimits(unittest.TestCase):
         self.assertTrue(out.endswith("of 200K"), out)
 
 
+class TestWorktreeSegment(unittest.TestCase):
+    def test_absent(self):
+        self.assertIsNone(sl.worktree_segment({}))
+
+    def test_empty_workspace(self):
+        self.assertIsNone(sl.worktree_segment({"workspace": {}}))
+
+    def test_full_object_shows_origin_branch(self):
+        seg = sl.worktree_segment(
+            {"worktree": {"name": "feat-x", "original_branch": "main"}})
+        self.assertEqual(plain(seg), "WT: feat-x ← main")
+
+    def test_without_original_branch_shows_name_only(self):
+        seg = sl.worktree_segment({"worktree": {"name": "feat-x"}})
+        self.assertEqual(plain(seg), "WT: feat-x")
+
+    def test_workspace_fallback_for_hand_made_worktrees(self):
+        seg = sl.worktree_segment({"workspace": {"git_worktree": "feat-x"}})
+        self.assertEqual(plain(seg), "WT: feat-x")
+
+    def test_worktree_object_takes_precedence_over_fallback(self):
+        seg = sl.worktree_segment({
+            "worktree": {"name": "from-object", "original_branch": "main"},
+            "workspace": {"git_worktree": "from-workspace"},
+        })
+        self.assertEqual(plain(seg), "WT: from-object ← main")
+
+    def test_empty_strings_count_as_absent(self):
+        self.assertIsNone(sl.worktree_segment(
+            {"worktree": {"name": ""}, "workspace": {"git_worktree": ""}}))
+
+    def test_renders_even_when_name_matches_branch(self):
+        # The segment's existence is the information: it says "not the main
+        # checkout", which is otherwise expensive to notice.
+        seg = sl.worktree_segment({"worktree": {"name": "feat-x"}})
+        self.assertIsNotNone(seg)
+
+
 if __name__ == "__main__":
     unittest.main()
