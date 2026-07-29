@@ -755,5 +755,51 @@ class TestPayloadDebugCapture(unittest.TestCase):
             self.assertIn("café", f.read())
 
 
+class TestReadmeSampleMatchesRenderer(unittest.TestCase):
+    """The README's sample output must be output the renderer can produce.
+
+    This branch shipped two doc-drift bugs of exactly this shape: a model
+    name the code could not render, and a progress bar with the wrong number
+    of filled blocks. Prose drifts silently; this pins the one part of the
+    sample that is mechanically derivable.
+    """
+
+    README = os.path.join(_HERE, os.pardir, "README.md")
+
+    def _sample_ctx_line(self):
+        with open(self.README, encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("CTX:"):
+                    return line.rstrip("\n")
+        self.fail("no CTX: sample line found in README.md")
+
+    def test_sample_bar_matches_the_renderer(self):
+        line = self._sample_ctx_line()
+        m = re.search(r"(\d+)% of", line)
+        self.assertIsNotNone(m, "README CTX sample has no percentage")
+        pct = int(m.group(1))
+
+        filled = line.count("▓")
+        empty = line.count("░")
+        self.assertEqual(filled + empty, 30, "README bar is not 30 cells wide")
+
+        expected = round(pct / 100 * 30)
+        self.assertEqual(
+            filled, expected,
+            f"README shows {filled} filled cells at {pct}%, "
+            f"but the renderer produces {expected}",
+        )
+
+    def test_sample_bar_matches_a_real_render(self):
+        line = self._sample_ctx_line()
+        pct = int(re.search(r"(\d+)% of", line).group(1))
+        rendered = plain(sl.render_context_window(
+            {"context_window": {"used_percentage": pct,
+                                "context_window_size": 1_000_000}}
+        ))
+        self.assertEqual(line.count("▓"), rendered.count("▓"))
+        self.assertEqual(line.count("░"), rendered.count("░"))
+
+
 if __name__ == "__main__":
     unittest.main()

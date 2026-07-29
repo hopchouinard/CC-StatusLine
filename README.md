@@ -6,7 +6,7 @@ A Claude Code plugin that renders a 4-line ANSI-colored statusline dashboard sho
 
 ```
 ENV: CC:2.1.220 | Model: Opus 5 (1M context) | Eff: high | SK: 44 | MCP: 5 | Hooks: 7
-CTX: ▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░ 17% of 1M | 5h: 42% (2h14m) | 7d: 68% (3d5h)
+CTX: ▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░░ 17% of 1M | 5h: 42% (2h14m) | 7d: 68% (3d5h)
 USE: $0.42 | 45m12s | API: 12m3s | +156 -23 lines
 GIT: my-project | feat-x | WT: feat-x ← main | Age: 25m | Mod: 3 | Staged: 1 | ↑2 ↓0
 ```

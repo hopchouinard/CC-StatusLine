@@ -163,8 +163,9 @@ def format_duration(ms, max_parts=None, days=False):
     next unit into its place: 3d0h5m must render "3d", never "3d5m", which sits
     next to the legitimate "3d5h" and reads as hours at a glance.
 
-    With max_parts=None every non-zero component is emitted, zeros and all —
-    the USE line depends on that exact behaviour.
+    With max_parts=None there is no cap and no interior-zero stop: every
+    non-zero component is emitted and zero components are simply skipped,
+    so 3d0h5m renders "3d5m". The USE line depends on that exact behaviour.
 
     days=True emits a leading day component instead of rolling days into
     hours. Defaults to False so existing callers are unaffected.
